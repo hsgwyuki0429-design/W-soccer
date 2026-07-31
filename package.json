@@ -1,0 +1,10 @@
+{
+  "name": "pair-kick",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PAIR KICK — 2つの駒、2本の親指。自分自身の両手で協力プレイする、2対2サッカー。",
+  "scripts": {
+    "start": "python3 -m http.server 8080"
+  }
+}

@@ -75,10 +75,10 @@ export function createState() {
     score: [0, 0],
     winner: -1,
     units: [
-      makeUnit(0, TEAM_PLAYER, 150 * S, 600 * S),
-      makeUnit(1, TEAM_PLAYER, 300 * S, 600 * S),
-      makeUnit(2, TEAM_BOT, 150 * S, 200 * S),
-      makeUnit(3, TEAM_BOT, 300 * S, 200 * S),
+      makeUnit(0, TEAM_PLAYER, F.w / 3, 600 * S),
+      makeUnit(1, TEAM_PLAYER, F.w * 2 / 3, 600 * S),
+      makeUnit(2, TEAM_BOT, F.w / 3, 200 * S),
+      makeUnit(3, TEAM_BOT, F.w * 2 / 3, 200 * S),
     ],
     ball: { x: F.w / 2, y: 665 * S, vx: 0, vy: 0 },
     heatT: 0,          // 秒。0..rampSeconds
@@ -115,7 +115,7 @@ function placeKickoff(s, possess) {
   for (const u of s.units) {
     // team0 の自陣は下（y 大）、team1 は上
     const own = u.team === TEAM_PLAYER ? 1 : -1;
-    u.x = (u.side === 0 ? 150 : 300) * S;
+    u.x = u.side === 0 ? F.w / 3 : F.w * 2 / 3;   // コート幅に対する比で置く
     u.y = cy + own * (u.team === possess ? 65 : 190) * S;   // 設計値(450x800基準)なので S 倍
     u.vx = u.vy = 0;
     u.cooldown = 0;

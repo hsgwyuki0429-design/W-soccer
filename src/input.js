@@ -6,8 +6,9 @@
 //   stick : 置いた地点を支点にした相対操作。進行方向は「置いた地点 → 今の指」。
 //           アクションの向きは、最後に指を走らせた向き（加速した地点 → 離した地点）。
 //           払っていなければ「置いた地点 → 離した地点」に落ちる。
-//   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かい、
-//           離すと「駒 → 指の場所」の角度へ撃つ。
+//   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かう。
+//           離すときに指を払っていればその向き、払っていなければ
+//           「駒 → 指の場所」の角度へ撃つ。
 //
 // 座標の扱いが2つの操作で違う：
 //   stick のジョイスティックは画面座標(CSS px)。カメラが動いても指の下から動かない。
@@ -117,10 +118,12 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
    * point は駒の位置が要るので、向きの確定は fill() まで遅らせる。
    */
   function resolveRelease(pt) {
-    if (mode === 'point') return { point: true, wx: pt.wx, wy: pt.wy };
-
+    // 「最後に指を走らせた向き」は両モード共通。払えばその向きへ撃つ。
     const flicked = findFlick(pt);
     if (flicked) return flicked;
+
+    // 払っていないときの落とし所だけがモードで違う
+    if (mode === 'point') return { point: true, wx: pt.wx, wy: pt.wy };
 
     const dx = pt.curX - pt.baseX;
     const dy = pt.curY - pt.baseY;

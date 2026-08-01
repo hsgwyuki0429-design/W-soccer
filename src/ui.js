@@ -174,10 +174,17 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
       waitingCancel = true;
     },
 
-    /** 接続エラー・相手の切断 */
-    showNetError(text) {
+    /**
+     * 接続エラー・相手の切断。
+     * @param {string} text  本文
+     * @param {boolean} everConnected  一度でも試合中/相手待ちに到達したか。
+     *   false なら「繋がったことがない」ので、そもそも失敗した扱いにする。
+     *   同じ見出しを使うと、一度も繋がっていないのに「切れました」と出て
+     *   誤解を招く（実際に起きた不具合報告はこれだった）。
+     */
+    showNetError(text, everConnected = true) {
       ovKicker.textContent = '対人戦';
-      ovTitle.textContent = '接続が切れました';
+      ovTitle.textContent = everConnected ? '接続が切れました' : '接続できませんでした';
       ovTitle.className = 'lose';
       ovBody.textContent = text;
       ovHints.style.display = 'none';

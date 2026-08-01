@@ -19,14 +19,15 @@ const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const audio = createAudio();
 const fx = FX.createEffects();
-const ui = createUI(onPrimary);
+const ui = createUI(onPrimary, (m) => input.setMode(m));
 
 const state = createState();
 const bot = createBot();
 const intents = [null, null, null, null];
 
-const input = createInput(canvas, (kind) => {
-  if (kind === 'stick') audio.click();
+const input = createInput(canvas, {
+  toWorld: renderer.toWorld,
+  onFeedback: (kind) => { if (kind === 'stick') audio.click(); },
 });
 
 let snapCamera = true;   // キックオフ・リセット時はカメラを補間せずに飛ばす
@@ -76,6 +77,7 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 document.addEventListener('visibilitychange', () => { last = performance.now(); });
 
 resize();
+ui.applyMode();          // 保存されている操作方法を input へ反映
 ui.showTitle();
 ui.setScore(0, 0);
 
@@ -205,7 +207,7 @@ function tick(dt) {
   const wasKickoff = state.phase === PHASE.KICKOFF;
 
   intents[0] = intents[1] = null;
-  input.fill(intents);
+  input.fill(intents, state.units);
   updateBot(bot, state, intents, dt);
 
   handleEvents(step(state, intents, dt));
@@ -228,4 +230,4 @@ function tick(dt) {
 requestAnimationFrame(frame);
 
 // デバッグ用（コンソールから触れるように）
-window.PAIRKICK = { state, fx, CONFIG, audio, input, cam: renderer.cam, view: renderer.view };
+window.PAIRKICK = { state, fx, CONFIG, audio, input, ui, cam: renderer.cam, view: renderer.view };

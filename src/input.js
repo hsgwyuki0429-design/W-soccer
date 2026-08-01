@@ -1,30 +1,38 @@
 // input.js — タッチ / マウス / キーボード を「意図」へ変換する。
-// game.js には触れない。出すのは intents 配列と、描画用のスティック状態だけ。
+// game.js には触れない。出すのは intents 配列と、描画用のポインタ状態だけ。
 //
-// ドラッグ中は「進行方向が変わる」だけで、どれだけ速く動かしても何も起きない。
-// アクション（キック / 体当たり / ダッシュ）は、指を離した瞬間に出る。
-// スワイプする必要はなく、スティックが倒れていればそのまま倒れている向きへ撃つ。
-// 撃たずに離したいときは、ノブを中央へ戻してから離す。
+// 操作方法は2つ。どちらも「指を離した瞬間にアクションが出る」点は同じ。
+//
+//   stick : 置いた地点を支点にした相対操作。倒した向きへ進み、
+//           離すと「置いた地点 → 離した地点」の角度へ撃つ。
+//   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かい、
+//           離すと「駒 → 指の場所」の角度へ撃つ。
+//
+// 座標の扱いが2つの操作で違う：
+//   stick のジョイスティックは画面座標(CSS px)。カメラが動いても指の下から動かない。
+//   point の目的地はワールド座標。カメラが動いてもコート上の同じ場所を指し続ける。
+// 担当（左半分＝左の駒）はどちらも画面基準。コート上の左右ではない。
 
 import { CONFIG } from './config.js';
 
 const S = CONFIG.stick;
+const C = CONFIG.control;
+
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 /**
- * 座標はすべて canvas 基準の CSS px で扱う。ワールド座標は一切見ない。
- * （カメラが動くゲームでジョイスティックをワールドに置くと、指を止めていても
- *   スティックが画面上を流れていってしまう。半画面の割り当ても同じ理由で画面基準。）
- * move / flick は正規化ベクトルなので、カメラが回転しない限りワールドでもそのまま使える。
- *
  * @param {HTMLCanvasElement} canvas
- * @param {(name:string) => void} onFeedback  スティック出現などの通知
+ * @param {object} opts
+ * @param {(x:number, y:number) => {x:number,y:number}} opts.toWorld  canvas内CSS px → ワールド
+ * @param {(name:string) => void} [opts.onFeedback]
  */
-export function createInput(canvas, onFeedback = () => {}) {
+export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
   // side 0 = 左半画面 → 駒0 / side 1 = 右半画面 → 駒1（担当は固定）
-  const sticks = [null, null];
+  const pointers = [null, null];
   const released = [null, null];   // 離した瞬間に確定したアクション（fill が回収する）
   const keys = new Set();
   const keyAction = [null, null];
+  let mode = C.defaultMode;
   let anyPointer = false;
 
   /** クライアント座標 → canvas 基準の CSS px */
@@ -38,25 +46,35 @@ export function createInput(canvas, onFeedback = () => {}) {
     return localX < width / 2 ? 0 : 1;
   }
 
-  function makeStick(id, p, now) {
+  function makePointer(id, p, now) {
+    const w = toWorld(p.x, p.y);
     return {
       id,
-      baseX: p.x, baseY: p.y,
-      curX: p.x, curY: p.y,
-      knobX: p.x, knobY: p.y,
+      baseX: p.x, baseY: p.y,     // 指を置いた地点（画面）。以後動かさない
+      curX: p.x, curY: p.y,       // 今の指の位置（画面）
+      knobX: p.x, knobY: p.y,     // 表示用にクランプしたノブ（画面）
+      wx: w.x, wy: w.y,           // 今の指の位置（ワールド）= point の目的地
       born: now,
       alpha: 1,
       dying: 0,
     };
   }
 
+  function track(pt, x, y) {
+    pt.curX = x; pt.curY = y;
+    const w = toWorld(x, y);
+    pt.wx = w.x; pt.wy = w.y;
+  }
+
   /**
-   * 離した瞬間のアクション。指の動きではなく、スティックの倒れ具合と向きで決める。
-   * 倒したまま離せば撃つ。中央へ戻してから離せば撃たない。
+   * 離した瞬間のアクション。
+   * stick は「指を置いた地点 → 離した地点」のベクトル。倒し量がしきい値未満なら撃たない。
+   * point は駒の位置が要るので、向きの確定は fill() まで遅らせる。
    */
-  function resolveRelease(st) {
-    const dx = st.curX - st.baseX;
-    const dy = st.curY - st.baseY;
+  function resolveRelease(pt) {
+    if (mode === 'point') return { point: true, wx: pt.wx, wy: pt.wy };
+    const dx = pt.curX - pt.baseX;
+    const dy = pt.curY - pt.baseY;
     const d = Math.hypot(dx, dy);
     if (d < S.maxRadius * S.releaseTilt) return null;
     return { x: dx / d, y: dy / d };
@@ -65,8 +83,8 @@ export function createInput(canvas, onFeedback = () => {}) {
   function onDown(e) {
     const p = local(e);
     const side = sideOf(p.x, p.w);
-    if (sticks[side] && sticks[side].dying === 0) return; // 同じ半画面の2本目は無視
-    sticks[side] = makeStick(e.pointerId, p, performance.now());
+    if (pointers[side] && pointers[side].dying === 0) return; // 同じ半画面の2本目は無視
+    pointers[side] = makePointer(e.pointerId, p, performance.now());
     anyPointer = true;
     onFeedback('stick');
     if (canvas.setPointerCapture) {
@@ -76,10 +94,10 @@ export function createInput(canvas, onFeedback = () => {}) {
   }
 
   function onMove(e) {
-    for (const st of sticks) {
-      if (!st || st.id !== e.pointerId || st.dying) continue;
+    for (const pt of pointers) {
+      if (!pt || pt.id !== e.pointerId || pt.dying) continue;
       const p = local(e);
-      st.curX = p.x; st.curY = p.y;
+      track(pt, p.x, p.y);
     }
     e.preventDefault();
   }
@@ -87,15 +105,15 @@ export function createInput(canvas, onFeedback = () => {}) {
   /** @param {boolean} fire pointercancel（OSに取り上げられた指）では撃たない */
   function onUp(e, fire = true) {
     for (let i = 0; i < 2; i++) {
-      const st = sticks[i];
-      if (!st || st.id !== e.pointerId || st.dying) continue;
+      const pt = pointers[i];
+      if (!pt || pt.id !== e.pointerId || pt.dying) continue;
       // 離した位置も反映してから判定する（up の座標が move と違う環境がある）
       const p = local(e);
-      st.curX = p.x; st.curY = p.y;
-      released[i] = fire ? resolveRelease(st) : null;
-      st.dying = 1;
+      track(pt, p.x, p.y);
+      released[i] = fire ? resolveRelease(pt) : null;
+      pt.dying = 1;
     }
-    anyPointer = sticks.some((s) => s && !s.dying);
+    anyPointer = pointers.some((s) => s && !s.dying);
   }
 
   canvas.addEventListener('pointerdown', onDown, { passive: false });
@@ -133,41 +151,75 @@ export function createInput(canvas, onFeedback = () => {}) {
   }
 
   return {
-    sticks,
+    pointers,
+    get mode() { return mode; },
+    setMode(m) {
+      if (m !== 'stick' && m !== 'point') return;
+      mode = m;
+      this.reset();
+    },
 
     // 見た目のフェード処理だけ（物理とは独立）
     update(dt) {
       for (let i = 0; i < 2; i++) {
-        const st = sticks[i];
-        if (!st) continue;
-        if (st.dying) {
-          st.alpha -= dt / 0.18;
-          if (st.alpha <= 0) { sticks[i] = null; continue; }
+        const pt = pointers[i];
+        if (!pt) continue;
+        if (pt.dying) {
+          pt.alpha -= dt / 0.18;
+          if (pt.alpha <= 0) { pointers[i] = null; continue; }
         }
-        const dx = st.curX - st.baseX;
-        const dy = st.curY - st.baseY;
+        const dx = pt.curX - pt.baseX;
+        const dy = pt.curY - pt.baseY;
         const d = Math.hypot(dx, dy);
         const k = d > S.maxRadius ? S.maxRadius / d : 1;
-        st.knobX = st.baseX + dx * k;
-        st.knobY = st.baseY + dy * k;
+        pt.knobX = pt.baseX + dx * k;
+        pt.knobY = pt.baseY + dy * k;
       }
     },
 
-    /** プレイヤー2駒ぶんの意図を intents[0], intents[1] に書き込む */
-    fill(intents) {
+    /**
+     * プレイヤー2駒ぶんの意図を intents[0], intents[1] に書き込む。
+     * @param {Array} units 自分の2駒（位置しか読まない。point の向きに要る）
+     */
+    fill(intents, units) {
       for (let side = 0; side < 2; side++) {
         let move = { x: 0, y: 0 };
         let flick = null;
+        const pt = pointers[side];
+        const u = units && units[side];
 
-        const st = sticks[side];
-        if (st && !st.dying) {
-          const dx = st.knobX - st.baseX;
-          const dy = st.knobY - st.baseY;
+        if (mode === 'point') {
+          // 指を置いた場所へ向かう。近づいたら減速する（行き過ぎて震えないように）
+          if (pt && !pt.dying && u) {
+            const dx = pt.wx - u.x, dy = pt.wy - u.y;
+            const d = Math.hypot(dx, dy);
+            if (d > 1e-3) {
+              const g = clamp(d / C.pointDamp, 0, 1);
+              move = { x: dx / d * g, y: dy / d * g };
+            }
+          }
+        } else if (pt && !pt.dying) {
+          // 置いた地点を支点にした倒し量。向きは「置いた地点 → 今の指」
+          const dx = pt.knobX - pt.baseX;
+          const dy = pt.knobY - pt.baseY;
           move = { x: dx / S.maxRadius, y: dy / S.maxRadius };
         }
 
         // 離した瞬間に確定したアクションを1回だけ渡す
-        if (released[side]) { flick = released[side]; released[side] = null; }
+        const rel = released[side];
+        if (rel) {
+          released[side] = null;
+          if (rel.point) {
+            // point は駒からの向き。駒がもう着いているなら撃たない
+            if (u) {
+              const dx = rel.wx - u.x, dy = rel.wy - u.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= C.pointFire) flick = { x: dx / d, y: dy / d };
+            }
+          } else {
+            flick = rel;
+          }
+        }
 
         const km = keyboardMove(side);
         if (km) move = km;
@@ -186,7 +238,7 @@ export function createInput(canvas, onFeedback = () => {}) {
     get active() { return anyPointer; },
 
     reset() {
-      sticks[0] = sticks[1] = null;
+      pointers[0] = pointers[1] = null;
       released[0] = released[1] = null;
       keys.clear();
       keyAction[0] = keyAction[1] = null;

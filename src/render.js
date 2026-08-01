@@ -139,6 +139,14 @@ export function createRenderer(canvas) {
     clampCenter(cam.scale);
   }
 
+  /** canvas 基準の CSS px → ワールド座標（カメラの寄り引きを考慮する） */
+  function toWorld(x, y) {
+    return {
+      x: cam.x + (x - view.cssW / 2) / cam.scale,
+      y: cam.y + (y - view.cssH / 2) / cam.scale,
+    };
+  }
+
   function draw(s, fx, input) {
     const W = canvas.width, H = canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -162,6 +170,7 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
+    if (input && input.mode === 'point') drawTargets(ctx, s, input);
     drawUnits(ctx, s, fx, input);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
@@ -169,7 +178,7 @@ export function createRenderer(canvas) {
     ctx.restore();
 
     // ジョイスティックは画面空間の要素。カメラと一緒に動いてはいけない。
-    if (input) drawSticks(ctx, view, input);
+    if (input && input.mode === 'stick') drawSticks(ctx, view, input);
 
     if (fx.flash.a > 0.001) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -180,7 +189,7 @@ export function createRenderer(canvas) {
     }
   }
 
-  return { ctx, view, cam, resize, updateCamera, draw };
+  return { ctx, view, cam, resize, updateCamera, draw, toWorld };
 }
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -326,7 +335,7 @@ function drawUnits(ctx, s, fx, input) {
 
     // 操作中のリング
     if (u.team === TEAM_PLAYER && input) {
-      const st = input.sticks[u.side];
+      const st = input.pointers[u.side];
       if (st) {
         ctx.strokeStyle = `rgba(255,255,255,${0.28 * st.alpha})`;
         ctx.lineWidth = 1.5 * S;
@@ -452,6 +461,44 @@ function drawRipples(ctx, fx) {
   ctx.globalAlpha = 1;
 }
 
+/** point 操作の目的地マーカー。ワールド空間なのでコート上の同じ場所を指し続ける。 */
+function drawTargets(ctx, s, input) {
+  const r = CONFIG.unit.radius;
+  for (let side = 0; side < 2; side++) {
+    const pt = input.pointers[side];
+    if (!pt) continue;
+    const a = Math.max(0, pt.alpha);
+    const u = s.units[side];
+    const color = COLORS.team[u.team];
+
+    // 駒から目的地への細い導線
+    ctx.strokeStyle = `rgba(255,255,255,${0.18 * a})`;
+    ctx.lineWidth = 1.5 * S;
+    ctx.setLineDash([6 * S, 7 * S]);
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(pt.wx, pt.wy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 目的地のリング
+    const grow = Math.min(1, (performance.now() - pt.born) / 130);
+    const rad = r * (pt.dying ? 0.9 : 0.8 + 0.2 * grow);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.85 * a;
+    ctx.lineWidth = 2.4 * S;
+    ctx.beginPath();
+    ctx.arc(pt.wx, pt.wy, rad, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.35 * a;
+    ctx.beginPath();
+    ctx.arc(pt.wx, pt.wy, rad * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ---------------------------------------------------------------- joystick
 
 export function drawSticks(ctx, view, input) {
@@ -459,7 +506,7 @@ export function drawSticks(ctx, view, input) {
   ctx.save();
   ctx.setTransform(d, 0, 0, d, 0, 0);   // 以降は CSS px で描く
 
-  for (const st of input.sticks) {
+  for (const st of input.pointers) {
     if (!st) continue;
     const a = Math.max(0, st.alpha);
     const grow = Math.min(1, (performance.now() - st.born) / 130);

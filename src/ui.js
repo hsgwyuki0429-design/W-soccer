@@ -1,7 +1,9 @@
 // ui.js — DOM オーバーレイ（HUD / バナー / タイトル / リザルト）。
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
-export function createUI(onPrimary) {
+const MODE_KEY = 'pairkick.controlMode';
+
+export function createUI(onPrimary, onModeChange) {
   const el = (id) => document.getElementById(id);
 
   const hud = el('hud');
@@ -16,6 +18,33 @@ export function createUI(onPrimary) {
   const ovBody = el('ov-body');
   const ovHints = el('ov-hints');
   const ovBtn = el('ov-btn');
+  const ovModes = el('ov-modes');
+  const hintTitle = el('hint-a-t');
+  const hintSub = el('hint-a-s');
+
+  let mode = 'stick';
+  try { mode = localStorage.getItem(MODE_KEY) || 'stick'; } catch (_) {}
+  if (mode !== 'stick' && mode !== 'point') mode = 'stick';
+
+  function paintMode() {
+    for (const b of ovModes.querySelectorAll('.seg')) {
+      b.classList.toggle('on', b.dataset.mode === mode);
+    }
+    hintTitle.textContent = mode === 'point' ? '置く' : '倒す';
+    hintSub.textContent = mode === 'point' ? 'そこへ進む' : '移動';
+  }
+
+  ovModes.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovModes.addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    mode = b.dataset.mode;
+    try { localStorage.setItem(MODE_KEY, mode); } catch (_) {}
+    paintMode();
+    onModeChange(mode);
+  });
 
   let bannerTimer = 0;
   let shown = [-1, -1];
@@ -37,7 +66,12 @@ export function createUI(onPrimary) {
     primary();
   });
 
+  paintMode();
+
   return {
+    get mode() { return mode; },
+    applyMode() { onModeChange(mode); },
+
     setUnit(u, hudBand) {
       const root = document.documentElement.style;
       root.setProperty('--u', u + 'px');

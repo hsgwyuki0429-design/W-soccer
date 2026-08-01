@@ -19,7 +19,7 @@ const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 const audio = createAudio();
 const fx = FX.createEffects();
-const ui = createUI(onPrimary, (m) => input.setMode(m));
+const ui = createUI(onPrimary, (m) => { input.setMode(m); snapCamera = true; });
 
 const state = createState();
 const bot = createBot();
@@ -194,7 +194,7 @@ function frame(now) {
   }
 
   FX.updateEffects(fx, dt);
-  renderer.updateCamera(state, dt, snapCamera);
+  renderer.updateCamera(state, dt, snapCamera, input.mode);
   snapCamera = false;
   audio.setHeat(heatRatio(state));
   ui.setScore(state.score[0], state.score[1]);

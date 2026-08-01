@@ -29,6 +29,7 @@
 const WORLD = 2;
 const PIECE = 0.5;
 const PACE  = 0.5;
+const WIDE  = 1.5;   // コートの横だけを伸ばす比率。縦は変えない
 
 export const WORLD_SCALE = WORLD;
 const w = (v) => v * WORLD;                 // 距離
@@ -36,10 +37,10 @@ const p = (v) => v * WORLD * PIECE;         // 駒とボールの半径
 const v = (val) => val * WORLD * PACE;      // 速度
 
 export const CONFIG = {
-  world: { scale: WORLD, piece: PIECE, pace: PACE },
+  world: { scale: WORLD, piece: PIECE, pace: PACE, wide: WIDE },
 
   field: {
-    w: w(450),
+    w: w(450 * WIDE),
     h: w(800),
     goalWidth: w(160),
     goalDepth: w(26),   // ゴールネットの奥行き（描画とボール停止用）
@@ -95,6 +96,14 @@ export const CONFIG = {
 
   // 操作方法。stick = 置いた地点を支点にした相対操作、
   // point = 進んでほしい場所に指を置く絶対操作。
+  // カメラ。stick は注視点に合わせて寄り引きする。
+  // point は「コートで画面を埋める」固定倍率＋駒が下寄りになる視点ずらし。
+  camera: {
+    minVisibleH: 0.40,   // stick: 画面に必ず入れるコート縦の割合
+    minVisibleW: 0.55,   // stick: 同じく横
+    pointBias: 0.20,     // point: 視界のこの割合ぶん前を見る（駒が下寄りになる）
+  },
+
   control: {
     defaultMode: 'stick',
     pointDamp: w(45),    // 目的地までこの距離を切ると減速する（行き過ぎて震えない範囲で最短に）

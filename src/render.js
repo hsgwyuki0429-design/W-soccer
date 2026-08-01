@@ -49,12 +49,22 @@ export function createRenderer(canvas) {
   // 追いかけながら、その広がりに応じてズームする。
   const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1 };
 
+  const CAM = CONFIG.camera;
+
+  /** コートで画面を埋めきる倍率（余白なし。コートの一部しか見えない） */
+  function fillScale() {
+    return Math.max(view.cssW / CONFIG.field.w, view.cssH / CONFIG.field.h);
+  }
+
   function limits() {
     // 全体が入る倍率（下限）と、寄れる上限。
-    // 上限は「コート幅が画面幅を埋める」か「コート縦の46%が見える」の小さいほう。
+    // 上限は「コート縦の40%」「コート横の55%」を必ず画面に残す線。
     // これ以上寄るとパスの受け手が画面外になり、パスが武器でなくなる。
     const fitAll = Math.min(view.cssW / VIEW.w, view.cssH / VIEW.h);
-    const maxIn = Math.min(view.cssW / VIEW.w, view.cssH / (CONFIG.field.h * 0.46));
+    const maxIn = Math.min(
+      view.cssH / (CONFIG.field.h * CAM.minVisibleH),
+      view.cssW / (CONFIG.field.w * CAM.minVisibleW)
+    );
     return { min: fitAll, max: Math.max(fitAll, maxIn) };
   }
 
@@ -115,25 +125,36 @@ export function createRenderer(canvas) {
     cam.y = (y1 - y0) <= hh * 2 ? (y0 + y1) / 2 : clamp(cam.y, y0 + hh, y1 - hh);
   }
 
-  /** @param {boolean} snap キックオフやリセットでは補間せず飛ばす */
-  function updateCamera(s, dt, snap = false) {
-    const lim = limits();
+  /**
+   * @param {boolean} snap キックオフやリセットでは補間せず飛ばす
+   * @param {'stick'|'point'} mode 操作方法でカメラの性格を変える
+   */
+  function updateCamera(s, dt, snap = false, mode = 'stick') {
     const f = focus(s);
-    const want = clamp(
-      Math.min(view.cssW / f.w, view.cssH / f.h),
-      lim.min, lim.max
-    );
+    let want, ty;
+
+    if (mode === 'point') {
+      // コートで画面を埋める固定倍率。寄り引きしない。
+      want = fillScale();
+      // 駒が画面の下寄りに来るよう、攻める方向（上）へ視点をずらす。
+      // 「指を置いた先へ進む」操作なので、進む先が広く見えていないと置けない。
+      ty = f.y - CAM.pointBias * (view.cssH / want);
+    } else {
+      const lim = limits();
+      want = clamp(Math.min(view.cssW / f.w, view.cssH / f.h), lim.min, lim.max);
+      ty = f.y;
+    }
 
     if (snap) {
       cam.scale = want;
       cam.x = f.x;
-      cam.y = f.y;
+      cam.y = ty;
     } else {
       // 指数補間。位置よりズームをゆっくりにして、寄り引きの揺れを抑える
       const kp = 1 - Math.exp(-dt / 0.16);
       const kz = 1 - Math.exp(-dt / 0.34);
       cam.x += (f.x - cam.x) * kp;
-      cam.y += (f.y - cam.y) * kp;
+      cam.y += (ty - cam.y) * kp;
       cam.scale += (want - cam.scale) * kz;
     }
     clampCenter(cam.scale);

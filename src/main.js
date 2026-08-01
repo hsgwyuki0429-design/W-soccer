@@ -56,7 +56,14 @@ function onPrimary() {
   input.reset();
   snapCamera = true;
   running = true;
-  ui.banner('READY', '', CONFIG.match.readySeconds * 1000 - 120);
+  showKickoffBanner();
+}
+
+// キックオフはタイマーではなく「蹴る側がボールに触れたら開始」なので、
+// バナーは自動で消さず、開始イベントで消す。
+function showKickoffBanner() {
+  const mine = state.kickoffTeam === TEAM_PLAYER;
+  ui.banner('KICK OFF', mine ? 'ボールに触れて開始' : '相手ボール', 0);
 }
 
 function resize() {
@@ -195,7 +202,7 @@ function frame(now) {
 }
 
 function tick(dt) {
-  const wasReady = state.phase === PHASE.READY;
+  const wasKickoff = state.phase === PHASE.KICKOFF;
 
   intents[0] = intents[1] = null;
   input.fill(intents);
@@ -204,7 +211,7 @@ function tick(dt) {
   handleEvents(step(state, intents, dt));
 
   // 見た目のフィードバック（純粋ロジックの外側）
-  if (state.phase === PHASE.PLAY) {
+  if (state.phase === PHASE.PLAY || state.phase === PHASE.KICKOFF) {
     const b = state.ball;
     if (Math.hypot(b.vx, b.vy) > 60 * V) FX.trailPoint(fx, b.x, b.y, heatRatio(state));
     for (const u of state.units) {
@@ -212,8 +219,8 @@ function tick(dt) {
     }
   }
 
-  if (!wasReady && state.phase === PHASE.READY) {
-    ui.banner('READY', '', CONFIG.match.readySeconds * 1000 - 150);
+  if (!wasKickoff && state.phase === PHASE.KICKOFF) {
+    showKickoffBanner();
     snapCamera = true;                 // 配置が飛ぶのでカメラも飛ばす
   }
 }
@@ -221,4 +228,4 @@ function tick(dt) {
 requestAnimationFrame(frame);
 
 // デバッグ用（コンソールから触れるように）
-window.PAIRKICK = { state, fx, CONFIG, audio, cam: renderer.cam, view: renderer.view };
+window.PAIRKICK = { state, fx, CONFIG, audio, input, cam: renderer.cam, view: renderer.view };

@@ -25,8 +25,7 @@
 // 同じ試合をそのまま半分の速さで見ているのと同じになる。
 //
 // 時定数のうち PACE に追従するのはシミュレーション側だけ。
-// READY表示やゴール後の停止（readySeconds / goalPause）は演出の間合いなので
-// 据え置く。
+// ゴール後の停止（goalPause）は演出の間合いなので据え置く。
 const WORLD = 2;
 const PIECE = 0.5;
 const PACE  = 0.5;
@@ -107,7 +106,7 @@ export const CONFIG = {
   match: {
     winScore: 3,
     goalPause: 1.2,
-    readySeconds: 1.1,
+    kickoffTimeout: 12,   // 誰も触らないまま固まらないための保険
     stuckSeconds: 3 / PACE,
     stuckSpeed: v(22),
   },

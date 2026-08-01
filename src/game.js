@@ -11,7 +11,7 @@
 import { CONFIG, TEAM_PLAYER, TEAM_BOT } from './config.js';
 
 export const PHASE = {
-  READY: 'ready',
+  KICKOFF: 'kickoff',   // センターのボールに、失点した側が触れるまで待つ
   PLAY: 'play',
   GOAL: 'goal',
   OVER: 'over',
@@ -70,8 +70,8 @@ function makeUnit(index, team, x, y) {
 export function createState() {
   const s = {
     time: 0,
-    phase: PHASE.READY,
-    phaseT: CONFIG.match.readySeconds,
+    phase: PHASE.KICKOFF,
+    phaseT: 0,
     score: [0, 0],
     winner: -1,
     units: [
@@ -86,6 +86,7 @@ export function createState() {
     lastTouch: -1,
     chain: 0,          // 自陣内パス連鎖（コンボ）
     chainTeam: -1,
+    kickoffTeam: TEAM_PLAYER,
     stuckT: 0,
     squeezeT: 0,
     wallCool: 0,
@@ -102,17 +103,20 @@ export function restart(s) {
   s.time = 0;
   s.heatT = 0;
   placeKickoff(s, TEAM_PLAYER);
-  s.phase = PHASE.READY;
-  s.phaseT = CONFIG.match.readySeconds;
+  s.phase = PHASE.KICKOFF;
+  s.phaseT = 0;
   s.events.length = 0;
 }
 
-// 失点した側（= possess）のボールで再開。ボールは失点側の守備サードへ。
+// 失点した側（= possess）のボールで再開。ボールは必ずセンター。
+// 蹴る側は自陣側からセンターへ寄せ、守る側は自陣に下げる。
 function placeKickoff(s, possess) {
-  const rows = [600 * S, 200 * S];              // team0 は下（自陣 y 大）、team1 は上
+  const cy = F.h / 2;
   for (const u of s.units) {
+    // team0 の自陣は下（y 大）、team1 は上
+    const own = u.team === TEAM_PLAYER ? 1 : -1;
     u.x = (u.side === 0 ? 150 : 300) * S;
-    u.y = rows[u.team];
+    u.y = cy + own * (u.team === possess ? 65 : 190) * S;   // 設計値(450x800基準)なので S 倍
     u.vx = u.vy = 0;
     u.cooldown = 0;
     u.dashT = 0;
@@ -121,7 +125,7 @@ function placeKickoff(s, possess) {
     u.faceY = u.team === TEAM_PLAYER ? -1 : 1;
   }
   s.ball.x = F.w / 2;
-  s.ball.y = (possess === TEAM_PLAYER ? 665 : 135) * S;
+  s.ball.y = cy;
   s.ball.vx = 0;
   s.ball.vy = 0;
   s.kicker = -1;
@@ -132,6 +136,7 @@ function placeKickoff(s, possess) {
   s.squeezeT = 0;
   s.heatT = 0;
   s.possess = possess;
+  s.kickoffTeam = possess;   // このキックオフで動けるのはこちらだけ
 }
 
 export function heatRatio(s) {
@@ -163,14 +168,6 @@ export function step(s, intents, dt) {
   s.events.length = 0;
 
   switch (s.phase) {
-    case PHASE.READY:
-      s.phaseT -= dt;
-      if (s.phaseT <= 0) {
-        s.phase = PHASE.PLAY;
-        emit(s, { type: 'kickoff', team: s.possess });
-      }
-      return s.events;
-
     case PHASE.GOAL:
       s.phaseT -= dt;
       if (s.phaseT <= 0) {
@@ -179,8 +176,8 @@ export function step(s, intents, dt) {
           emit(s, { type: 'matchend', winner: s.winner });
         } else {
           placeKickoff(s, s.concededBy);
-          s.phase = PHASE.READY;
-          s.phaseT = CONFIG.match.readySeconds;
+          s.phase = PHASE.KICKOFF;
+          s.phaseT = 0;
         }
       }
       return s.events;
@@ -189,14 +186,24 @@ export function step(s, intents, dt) {
       return s.events;
   }
 
-  // ---- PLAY ----
-  s.time += dt;
+  // ---- KICKOFF / PLAY ----
+  // キックオフ中も物理はそのまま動かす。違うのは2点だけ：
+  //   守る側は動けない / ボールに触れた瞬間に試合が始まる。
+  const kickoff = s.phase === PHASE.KICKOFF;
+
   s.wallCool = Math.max(0, (s.wallCool || 0) - dt);
-  s.heatT = Math.min(s.heatT + dt, CONFIG.heat.rampSeconds);
+  if (kickoff) {
+    s.phaseT += dt;
+  } else {
+    s.time += dt;
+    s.heatT = Math.min(s.heatT + dt, CONFIG.heat.rampSeconds);
+  }
   const heat = heatMultiplier(s);
 
   for (let i = 0; i < s.units.length; i++) {
-    applyIntent(s, s.units[i], intents[i] || NO_INTENT, dt, heat);
+    const u = s.units[i];
+    const held = kickoff && u.team !== s.kickoffTeam;
+    applyIntent(s, u, held ? NO_INTENT : (intents[i] || NO_INTENT), dt, heat);
   }
 
   integrateUnits(s, dt);
@@ -205,6 +212,16 @@ export function step(s, intents, dt) {
   resolveUnitUnit(s);
   resolveUnitBall(s, heat, dt);
   resolvePosts(s);
+
+  if (kickoff) {
+    // 蹴る側が触れたら開始。誰も触らないまま固まらないよう保険の時間切れも見る。
+    const touched = s.lastTouch >= 0 && s.units[s.lastTouch].team === s.kickoffTeam;
+    if (touched || s.phaseT >= CONFIG.match.kickoffTimeout) {
+      s.phase = PHASE.PLAY;
+      emit(s, { type: 'kickoff', team: s.kickoffTeam, touched });
+    }
+    return s.events;
+  }
 
   checkStuck(s, dt);
   checkGoal(s);

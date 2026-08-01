@@ -37,7 +37,8 @@ export function createBot(team = TEAM_BOT) {
 export function updateBot(bot, s, intents, dt) {
   const mine = s.units.filter((u) => u.team === bot.team);
 
-  if (s.phase !== PHASE.PLAY) {
+  // キックオフ中も動かす（自分たちが蹴る側ならボールへ向かう必要がある）
+  if (s.phase !== PHASE.PLAY && s.phase !== PHASE.KICKOFF) {
     for (const u of mine) intents[u.index] = { move: { x: 0, y: 0 }, flick: null };
     bot.plans.clear();
     bot.timer = 0;

@@ -85,6 +85,14 @@ export const CONFIG = {
     releaseTilt: 0.2,
   },
 
+  // 操作方法。stick = 置いた地点を支点にした相対操作、
+  // point = 進んでほしい場所に指を置く絶対操作。
+  control: {
+    defaultMode: 'stick',
+    pointDamp: w(45),    // 目的地までこの距離を切ると減速する（行き過ぎて震えない範囲で最短に）
+    pointFire: w(30),    // 離した時にこれ以上離れていればアクションが出る
+  },
+
   heat: {
     rampSeconds: 25 / PACE,   // ヒートはラリーの長さに追従させる（実時間ではなく）
     maxMultiplier: 1.25,

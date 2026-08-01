@@ -212,6 +212,36 @@ html, body {
   opacity: 0.66;
 }
 
+#ov-modes {
+  display: flex;
+  gap: 0;
+  margin: calc(var(--u) * 20) 0 0;
+  padding: calc(var(--u) * 3);
+  border-radius: calc(var(--u) * 14);
+  background: rgba(255, 255, 255, 0.08);
+  border: 0.5px solid var(--hairline);
+}
+.seg {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: inherit;
+  font-size: calc(var(--u) * 12);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * 0.2);
+  padding: calc(var(--u) * 8) 0;
+  border-radius: calc(var(--u) * 11);
+  cursor: pointer;
+  transition: background 0.28s var(--spring), color 0.28s var(--spring);
+}
+.seg.on {
+  background: rgba(255, 255, 255, 0.92);
+  color: #10231a;
+  box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 8) rgba(0, 0, 0, 0.2);
+}
+
 #ov-hints {
   display: flex;
   gap: calc(var(--u) * 8);
@@ -266,7 +296,9 @@ html, body {
   }
   #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
   #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
-  #ov-hints { margin: calc(var(--u) * 12) 0 calc(var(--u) * 12); }
+  #ov-modes { margin-top: calc(var(--u) * 12); }
+  .seg { padding: calc(var(--u) * 6) 0; }
+  #ov-hints { margin: calc(var(--u) * 10) 0 calc(var(--u) * 10); }
   .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }
   .pill { margin-top: calc(var(--u) * 12); padding: calc(var(--u) * 11) calc(var(--u) * 20); }
   #banner { top: 34%; }

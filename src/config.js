@@ -78,10 +78,12 @@ export const CONFIG = {
   // スティックは指のインターフェースなので、単位は CSS px。
   // カメラが寄ろうが引こうが、指に対する大きさは変わらない。
   stick: {
-    maxRadius: 60,         // CSS px
-    knobRadius: 25,        // CSS px
-    releaseWindowMs: 110,  // 指を離す直前のこの時間だけを見る
-    releaseDist: 26,       // CSS px。この距離だけ動いていればアクション
+    maxRadius: 60,      // CSS px
+    knobRadius: 25,     // CSS px
+    // 離した瞬間、スティックがこれ以上倒れていればアクションが出る。
+    // 倒し量そのものを見るので、スワイプする必要はない。
+    // 逆に、中央へ戻してから離せば何も起きない（これが唯一の「撃たない」方法）。
+    releaseTilt: 0.2,
   },
 
   heat: {

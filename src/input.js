@@ -2,8 +2,9 @@
 // game.js には触れない。出すのは intents 配列と、描画用のスティック状態だけ。
 //
 // ドラッグ中は「進行方向が変わる」だけで、どれだけ速く動かしても何も起きない。
-// アクション（キック / 体当たり / ダッシュ）が出るのは、
-// スワイプしながら指を離した瞬間だけ。止まった状態で離せば何も起きない。
+// アクション（キック / 体当たり / ダッシュ）は、指を離した瞬間に出る。
+// スワイプする必要はなく、スティックが倒れていればそのまま倒れている向きへ撃つ。
+// 撃たずに離したいときは、ノブを中央へ戻してから離す。
 
 import { CONFIG } from './config.js';
 
@@ -46,29 +47,18 @@ export function createInput(canvas, onFeedback = () => {}) {
       born: now,
       alpha: 1,
       dying: 0,
-      history: [{ x: p.x, y: p.y, t: now }],
     };
   }
 
-  function record(st, x, y, now) {
-    st.curX = x; st.curY = y;
-    st.history.push({ x, y, t: now });
-    // 判定に使うのは直近の窓だけなので、それより古い点は捨てる
-    const cutoff = now - S.releaseWindowMs * 2;
-    while (st.history.length > 2 && st.history[0].t < cutoff) st.history.shift();
-  }
-
-  /** 離した瞬間の「直前 releaseWindowMs の移動」を見てアクションを決める */
-  function resolveRelease(st, now) {
-    const cutoff = now - S.releaseWindowMs;
-    let ref = st.history[0];
-    for (let i = st.history.length - 1; i >= 0; i--) {
-      if (st.history[i].t <= cutoff) { ref = st.history[i]; break; }
-    }
-    const dx = st.curX - ref.x;
-    const dy = st.curY - ref.y;
+  /**
+   * 離した瞬間のアクション。指の動きではなく、スティックの倒れ具合と向きで決める。
+   * 倒したまま離せば撃つ。中央へ戻してから離せば撃たない。
+   */
+  function resolveRelease(st) {
+    const dx = st.curX - st.baseX;
+    const dy = st.curY - st.baseY;
     const d = Math.hypot(dx, dy);
-    if (d < S.releaseDist) return null;      // 止めてから離した = 何も起きない
+    if (d < S.maxRadius * S.releaseTilt) return null;
     return { x: dx / d, y: dy / d };
   }
 
@@ -86,24 +76,23 @@ export function createInput(canvas, onFeedback = () => {}) {
   }
 
   function onMove(e) {
-    const now = performance.now();
     for (const st of sticks) {
       if (!st || st.id !== e.pointerId || st.dying) continue;
       const p = local(e);
-      record(st, p.x, p.y, now);
+      st.curX = p.x; st.curY = p.y;
     }
     e.preventDefault();
   }
 
-  function onUp(e) {
-    const now = performance.now();
+  /** @param {boolean} fire pointercancel（OSに取り上げられた指）では撃たない */
+  function onUp(e, fire = true) {
     for (let i = 0; i < 2; i++) {
       const st = sticks[i];
       if (!st || st.id !== e.pointerId || st.dying) continue;
-      // 離した位置も履歴に入れてから判定する（up の座標が move と違う環境がある）
+      // 離した位置も反映してから判定する（up の座標が move と違う環境がある）
       const p = local(e);
-      record(st, p.x, p.y, now);
-      released[i] = resolveRelease(st, now);
+      st.curX = p.x; st.curY = p.y;
+      released[i] = fire ? resolveRelease(st) : null;
       st.dying = 1;
     }
     anyPointer = sticks.some((s) => s && !s.dying);
@@ -111,8 +100,8 @@ export function createInput(canvas, onFeedback = () => {}) {
 
   canvas.addEventListener('pointerdown', onDown, { passive: false });
   canvas.addEventListener('pointermove', onMove, { passive: false });
-  window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
+  window.addEventListener('pointerup', (e) => onUp(e, true));
+  window.addEventListener('pointercancel', (e) => onUp(e, false));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---- キーボード（デスクトップ検証用） ----

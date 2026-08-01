@@ -3,8 +3,9 @@
 //
 // 操作方法は2つ。どちらも「指を離した瞬間にアクションが出る」点は同じ。
 //
-//   stick : 置いた地点を支点にした相対操作。倒した向きへ進み、
-//           離すと「置いた地点 → 離した地点」の角度へ撃つ。
+//   stick : 置いた地点を支点にした相対操作。進行方向は「置いた地点 → 今の指」。
+//           アクションの向きは、最後に指を走らせた向き（加速した地点 → 離した地点）。
+//           払っていなければ「置いた地点 → 離した地点」に落ちる。
 //   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かい、
 //           離すと「駒 → 指の場所」の角度へ撃つ。
 //
@@ -57,22 +58,70 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
       born: now,
       alpha: 1,
       dying: 0,
+      history: [{ x: p.x, y: p.y, t: now }],   // フリックの起点を探すのに使う
     };
   }
 
-  function track(pt, x, y) {
+  function track(pt, x, y, now) {
     pt.curX = x; pt.curY = y;
     const w = toWorld(x, y);
     pt.wx = w.x; pt.wy = w.y;
+
+    const h = pt.history;
+    const last = h[h.length - 1];
+    // 動いていないなら点を増やさず、時刻だけ進める。
+    // pointerup は直前の move と同座標で来ることが多く、そのまま積むと
+    // 「長さ0の最終区間」ができてフリック判定が即座に打ち切られる。
+    // 時刻だけ進めておけば、指を止めてから離した場合はその区間の速さが
+    // 落ちるので、意図どおり「払っていない」と判定される。
+    if (last && Math.hypot(x - last.x, y - last.y) < 1) {
+      last.t = now;
+    } else {
+      h.push({ x, y, t: now });
+    }
+    // 遡るのは flickMaxMs までなので、その倍も持てば十分
+    const cutoff = now - S.flickMaxMs * 2;
+    while (h.length > 2 && h[0].t < cutoff) h.shift();
+  }
+
+  /**
+   * 「最後に指を走らせた区間」の起点を探す。
+   * 終端から遡って、指の速さが flickSpeed を下回った所で止める。
+   * ゆっくり操舵してから最後にパッと払うと、その払った区間だけが残る。
+   */
+  function findFlick(pt) {
+    const h = pt.history;
+    if (h.length < 2) return null;
+    const last = h[h.length - 1];
+    let i = h.length - 1;
+    while (i > 0) {
+      const a = h[i - 1], b = h[i];
+      if (last.t - a.t > S.flickMaxMs) break;
+      const dt = b.t - a.t;
+      if (dt <= 0) { i--; continue; }
+      const speed = Math.hypot(b.x - a.x, b.y - a.y) / dt;
+      if (speed < S.flickSpeed) break;
+      i--;
+    }
+    const origin = h[i];
+    const dx = last.x - origin.x, dy = last.y - origin.y;
+    const d = Math.hypot(dx, dy);
+    if (d < S.flickDist) return null;      // 払っていない
+    return { x: dx / d, y: dy / d };
   }
 
   /**
    * 離した瞬間のアクション。
-   * stick は「指を置いた地点 → 離した地点」のベクトル。倒し量がしきい値未満なら撃たない。
+   * stick は、最後に指を走らせた向きがあればそれを使う。
+   * 払っていなければ「置いた地点 → 離した地点」（倒し量がしきい値未満なら撃たない）。
    * point は駒の位置が要るので、向きの確定は fill() まで遅らせる。
    */
   function resolveRelease(pt) {
     if (mode === 'point') return { point: true, wx: pt.wx, wy: pt.wy };
+
+    const flicked = findFlick(pt);
+    if (flicked) return flicked;
+
     const dx = pt.curX - pt.baseX;
     const dy = pt.curY - pt.baseY;
     const d = Math.hypot(dx, dy);
@@ -97,7 +146,7 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
     for (const pt of pointers) {
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
       const p = local(e);
-      track(pt, p.x, p.y);
+      track(pt, p.x, p.y, performance.now());
     }
     e.preventDefault();
   }
@@ -109,7 +158,7 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
       // 離した位置も反映してから判定する（up の座標が move と違う環境がある）
       const p = local(e);
-      track(pt, p.x, p.y);
+      track(pt, p.x, p.y, performance.now());
       released[i] = fire ? resolveRelease(pt) : null;
       pt.dying = 1;
     }

@@ -11,6 +11,7 @@ import { createUI } from './ui.js';
 import * as FX from './effects.js';
 
 const S = CONFIG.world.scale;
+const V = S * CONFIG.world.pace;
 const STEP = 1 / 60;
 const MAX_STEPS = 5;
 
@@ -205,7 +206,7 @@ function tick(dt) {
   // 見た目のフィードバック（純粋ロジックの外側）
   if (state.phase === PHASE.PLAY) {
     const b = state.ball;
-    if (Math.hypot(b.vx, b.vy) > 60 * S) FX.trailPoint(fx, b.x, b.y, heatRatio(state));
+    if (Math.hypot(b.vx, b.vy) > 60 * V) FX.trailPoint(fx, b.x, b.y, heatRatio(state));
     for (const u of state.units) {
       if (u.dashT > 0) FX.ghost(fx, u.x, u.y, CONFIG.unit.radius, COLORS.team[u.team]);
     }

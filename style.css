@@ -1,0 +1,264 @@
+/* PAIR KICK — UI レイヤー
+   フィールドは Canvas 側でフラットに。質感はここに集中させる。 */
+
+:root {
+  --u: 1px;                       /* 論理1pxぶんの実サイズ（JSが更新） */
+  --spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --hairline: rgba(255, 255, 255, 0.14);
+  --team-a: #ff6b57;
+  --team-b: #3ecfc4;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #06100c;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app { position: fixed; inset: 0; }
+
+#game {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+/* UI は画面全体を覆う。--u（論理1pxの実サイズ）は JS が :root に書き込む。 */
+#stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------- 素材 */
+
+.glass {
+  background: rgba(22, 26, 24, 0.44);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid var(--hairline);
+  box-shadow:
+    0 calc(var(--u) * 8) calc(var(--u) * 34) rgba(0, 0, 0, 0.28),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
+}
+
+/* ---------------------------------------------------------- HUD */
+
+/* フィールド上端（ゴールネットの上）までの帯にスコアを収める。
+   ゴール口に被せないための専用スロット。 */
+#hud-slot {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: var(--hud-band, 60px);
+  min-height: calc(var(--u) * 40);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+#hud {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  padding: calc(var(--u) * 7) calc(var(--u) * 16);
+  border-radius: calc(var(--u) * 22);
+}
+
+#hud .num {
+  font-size: calc(var(--u) * 26);
+  font-weight: 600;             /* Semibold。Bold で押し切らない */
+  letter-spacing: calc(var(--u) * -0.9);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  min-width: calc(var(--u) * 17);
+  text-align: center;
+  transition: transform 0.36s var(--spring), color 0.36s var(--spring);
+}
+#hud .num.bump { transform: scale(1.28); }
+
+#hud .sep {
+  width: calc(var(--u) * 9);
+  height: 1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+#hud .dot {
+  width: calc(var(--u) * 9);
+  height: calc(var(--u) * 9);
+  border-radius: 50%;
+}
+.dot-a { background: var(--team-a); box-shadow: 0 0 calc(var(--u) * 10) rgba(255,107,87,0.55); }
+.dot-b { background: var(--team-b); box-shadow: 0 0 calc(var(--u) * 10) rgba(62,207,196,0.55); }
+
+#hud.matchpoint {
+  border-color: rgba(255, 215, 0, 0.5);
+  box-shadow:
+    0 calc(var(--u) * 8) calc(var(--u) * 34) rgba(0,0,0,0.28),
+    0 0 calc(var(--u) * 26) rgba(255, 215, 0, 0.28),
+    inset 0 0.5px 0 rgba(255,255,255,0.2);
+}
+
+/* ---------------------------------------------------------- バナー */
+
+#banner {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+}
+#banner.show { animation: bannerIn 0.42s var(--spring) both; }
+#banner.out  { animation: bannerOut 0.3s var(--spring) both; }
+
+.banner-card {
+  padding: calc(var(--u) * 16) calc(var(--u) * 30);
+  border-radius: calc(var(--u) * 26);
+  text-align: center;
+  white-space: nowrap;
+}
+#banner-title {
+  font-size: calc(var(--u) * 34);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * 0.6);
+  line-height: 1.05;
+}
+#banner-sub {
+  margin-top: calc(var(--u) * 5);
+  font-size: calc(var(--u) * 12);
+  font-weight: 500;
+  letter-spacing: calc(var(--u) * 0.3);
+  opacity: 0.62;
+}
+#banner-sub:empty { display: none; }
+
+@keyframes bannerIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes bannerOut {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+}
+
+/* ---------------------------------------------------------- オーバーレイ */
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  background: rgba(6, 16, 12, 0.34);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transition: opacity 0.34s var(--spring);
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+
+#overlay-card {
+  width: calc(var(--u) * 336);
+  padding: calc(var(--u) * 30) calc(var(--u) * 26) calc(var(--u) * 24);
+  border-radius: calc(var(--u) * 28);
+  text-align: center;
+  animation: cardIn 0.5s var(--spring) both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+#ov-kicker {
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * 1.4);
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+#ov-title {
+  margin: calc(var(--u) * 8) 0 calc(var(--u) * 12);
+  font-size: calc(var(--u) * 42);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * -1.2);
+  line-height: 1;
+}
+#ov-title.win  { color: var(--team-a); }
+#ov-title.lose { color: rgba(255,255,255,0.82); }
+
+#ov-body {
+  margin: 0;
+  font-size: calc(var(--u) * 13);
+  line-height: 1.65;
+  font-weight: 400;
+  opacity: 0.66;
+}
+
+#ov-hints {
+  display: flex;
+  gap: calc(var(--u) * 8);
+  margin: calc(var(--u) * 20) 0 calc(var(--u) * 22);
+}
+.hint {
+  flex: 1;
+  padding: calc(var(--u) * 11) calc(var(--u) * 6);
+  border-radius: calc(var(--u) * 16);
+  background: rgba(255, 255, 255, 0.06);
+  border: 0.5px solid var(--hairline);
+}
+.hint b {
+  display: block;
+  font-size: calc(var(--u) * 12);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * 0.2);
+}
+.hint span {
+  display: block;
+  margin-top: calc(var(--u) * 3);
+  font-size: calc(var(--u) * 10);
+  opacity: 0.55;
+}
+
+.pill {
+  appearance: none;
+  border: none;
+  width: 100%;
+  margin-top: calc(var(--u) * 20);
+  padding: calc(var(--u) * 14) calc(var(--u) * 20);
+  border-radius: calc(var(--u) * 100);
+  background: #fff;
+  color: #10231a;
+  font-family: inherit;
+  font-size: calc(var(--u) * 15);
+  font-weight: 600;
+  letter-spacing: calc(var(--u) * 0.1);
+  cursor: pointer;
+  box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 20) rgba(0, 0, 0, 0.24);
+  transition: transform 0.28s var(--spring), opacity 0.28s var(--spring);
+}
+.pill:active { transform: scale(0.97); opacity: 0.9; }
+
+/* ---------------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  #banner.show, #banner.out, #overlay-card { animation-duration: 0.001s; }
+  #hud .num, .pill, #overlay { transition-duration: 0.001s; }
+}

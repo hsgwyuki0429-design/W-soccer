@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0b1712" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>PAIR KICK</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!-- UI はここに集中。半透明レイヤー + blur。フィールドはフラットに保つ。 -->
+    <div id="stage" aria-hidden="false">
+
+      <div id="hud-slot"><div id="hud" class="glass">
+        <span class="dot dot-a"></span>
+        <span id="score-a" class="num">0</span>
+        <span class="sep"></span>
+        <span id="score-b" class="num">0</span>
+        <span class="dot dot-b"></span>
+      </div></div>
+
+      <div id="banner"><div id="banner-in" class="glass banner-card">
+        <div id="banner-title">READY</div>
+        <div id="banner-sub"></div>
+      </div></div>
+
+      <div id="overlay">
+        <div id="overlay-card" class="glass">
+          <div id="ov-kicker">2対2サッカー</div>
+          <h1 id="ov-title">PAIR&nbsp;KICK</h1>
+          <p id="ov-body">2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。</p>
+          <div id="ov-hints">
+            <div class="hint"><b>倒す</b><span>移動</span></div>
+            <div class="hint"><b>フリック</b><span>キック / ダッシュ</span></div>
+          </div>
+          <button id="ov-btn" class="pill">はじめる</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

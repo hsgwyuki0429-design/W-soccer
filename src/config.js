@@ -5,6 +5,7 @@
 //
 // WORLD : コートの拡大率（各辺）。面積は WORLD² 倍。
 // PIECE : 駒とボールの大きさ。現行の見た目を 1 とした比率。
+// PACE  : 全体の速さ。0.5 で「すべてが半分の速さ」。
 //
 // カメラは常にコート全体を画面に収める（= 画面倍率は 1/WORLD になる）ので、
 // 「コートを大きくする」と「駒を小さく見せる」は同じ操作になる。
@@ -13,15 +14,30 @@
 //
 // 距離・速度は WORLD に追従させてある。したがってコートを広げても
 // 「端から端まで何秒か」「キック1発がコートの何割を進むか」は変わらない。
+//
+// PACE は「速さ」だけを変え、軌道の形と届く距離は変えない。
+//
+// 速度を半分にしただけだと、摩擦がそのままなのでボールの到達距離も半分になり、
+// キック1発がコート長辺の23%しか進まなくなる（= パスが武器でなくなる）。
+// そうならないよう、PACE は「シミュレーションの時間を引き伸ばす」ものとして
+// 扱う：速度に PACE を掛け、時定数を PACE で割る。摩擦だけは指数減衰なので
+// f^PACE。結果として v'(t) = PACE·v(PACE·t)、x'(t) = x(PACE·t) が成り立ち、
+// 同じ試合をそのまま半分の速さで見ているのと同じになる。
+//
+// 時定数のうち PACE に追従するのはシミュレーション側だけ。
+// READY表示やゴール後の停止（readySeconds / goalPause）は演出の間合いなので
+// 据え置く。
 const WORLD = 2;
 const PIECE = 0.5;
+const PACE  = 0.5;
 
 export const WORLD_SCALE = WORLD;
-const w = (v) => v * WORLD;          // 距離・速度（ワールド空間）
-const p = (v) => v * WORLD * PIECE;  // 駒とボールの半径
+const w = (v) => v * WORLD;                 // 距離
+const p = (v) => v * WORLD * PIECE;         // 駒とボールの半径
+const v = (val) => val * WORLD * PACE;      // 速度
 
 export const CONFIG = {
-  world: { scale: WORLD, piece: PIECE },
+  world: { scale: WORLD, piece: PIECE, pace: PACE },
 
   field: {
     w: w(450),
@@ -34,28 +50,29 @@ export const CONFIG = {
 
   unit: {
     radius: p(22),
-    maxSpeed: w(260),
-    cooldown: 0.4,     // キック/ダッシュ共有
-    accelSmoothing: 0.2,
+    maxSpeed: v(260),
+    cooldown: 0.4 / PACE,       // 移動距離あたりの行動回数を変えない
+    accelSmoothing: 1 - Math.pow(0.8, PACE),   // 最高速に乗るまでの距離を変えない
     bounce: 0.35,      // 駒同士の押し合い（柔らかく）
     mass: 1,
   },
 
   ball: {
     radius: p(12),
-    maxSpeed: w(750),
+    maxSpeed: v(750),
     bounce: 0.7,
-    frictionPerSec: 0.18, // v *= pow(f, dt)  芝が長いイメージ
+    // v *= pow(f, dt)。芝が長いイメージ。PACE で到達距離が変わらないよう f^PACE。
+    frictionPerSec: Math.pow(0.18, PACE),
   },
 
   kick: {
-    speed: w(640),
+    speed: v(640),
     reachPad: w(10),
   },
 
   dash: {
-    speed: w(520),
-    duration: 0.15,
+    speed: v(520),
+    duration: 0.15 / PACE,   // 速さが落ちても踏み込む距離は変えない
   },
 
   // スティックは指のインターフェースなので、単位は CSS px。
@@ -68,13 +85,13 @@ export const CONFIG = {
   },
 
   heat: {
-    rampSeconds: 25,
+    rampSeconds: 25 / PACE,   // ヒートはラリーの長さに追従させる（実時間ではなく）
     maxMultiplier: 1.25,
   },
 
   bot: {
     speedMultiplier: 0.9,
-    rethinkMs: 120,
+    rethinkMs: 120 / PACE,   // 反応の遅れも引き伸ばす。据え置くと遅い試合ほどボットが鋭くなる
     noise: 0.15,
     shootRange: w(240),
     pointBlank: w(140),
@@ -82,14 +99,15 @@ export const CONFIG = {
     laneClearRadius: w(18),
     laneFootSkip: w(44),
     tackleRange: w(150),
+    passLeadSpeed: v(380),   // パスの到達時間の見積もりに使う代表速度
   },
 
   match: {
     winScore: 3,
     goalPause: 1.2,
     readySeconds: 1.1,
-    stuckSeconds: 3,
-    stuckSpeed: w(22),
+    stuckSeconds: 3 / PACE,
+    stuckSpeed: v(22),
   },
 
   audio: {

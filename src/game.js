@@ -18,7 +18,8 @@ export const PHASE = {
 };
 
 const F = CONFIG.field;
-const S = CONFIG.world.scale;   // ワールド空間の速度・距離はこれに追従する
+const S = CONFIG.world.scale;              // 距離はこれに追従
+const V = S * CONFIG.world.pace;           // 速度はこれに追従（PACE を含む）
 const goalLeft = () => (F.w - F.goalWidth) / 2;
 const goalRight = () => (F.w + F.goalWidth) / 2;
 
@@ -317,9 +318,9 @@ function integrateBall(s, dt, heat) {
 
 function wall(s, b) {
   const sp = Math.hypot(b.vx, b.vy);
-  if (sp > 60 * S && s.wallCool <= 0) {
+  if (sp > 60 * V && s.wallCool <= 0) {
     s.wallCool = 0.08;
-    emit(s, { type: 'wall', x: b.x, y: b.y, strength: clamp(sp / (500 * S), 0, 1) });
+    emit(s, { type: 'wall', x: b.x, y: b.y, strength: clamp(sp / (500 * V), 0, 1) });
   }
 }
 
@@ -343,11 +344,11 @@ function resolveUnitUnit(s) {
         const imp = -(1 + CONFIG.unit.bounce) * rvn * 0.5;
         a.vx -= imp * nx; a.vy -= imp * ny;
         b.vx += imp * nx; b.vy += imp * ny;
-        if (Math.abs(rvn) > 180 * S) {
+        if (Math.abs(rvn) > 180 * V) {
           emit(s, {
             type: 'bump',
             x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
-            strength: clamp(Math.abs(rvn) / (600 * S), 0, 1),
+            strength: clamp(Math.abs(rvn) / (600 * V), 0, 1),
           });
         }
       }
@@ -383,7 +384,7 @@ function resolveUnitBall(s, heat, dt) {
           type: 'touch',
           unit: u.index, team: u.team,
           x: b.x, y: b.y,
-          strength: clamp(Math.abs(vn) / (420 * S), 0, 1),
+          strength: clamp(Math.abs(vn) / (420 * V), 0, 1),
         });
       }
       registerTouch(s, u, false);
@@ -430,12 +431,12 @@ function unpinBall(s, dt) {
         const need = Math.sqrt(Math.max(1, rr * rr - dx * dx));
         const sign = dy >= 0 ? 1 : -1;
         b.y = u.y + sign * need;
-        b.vy += sign * 110 * S;
+        b.vy += sign * 110 * V;
       } else if (horizontal && !vertical) {
         const need = Math.sqrt(Math.max(1, rr * rr - dy * dy));
         const sign = dx >= 0 ? 1 : -1;
         b.x = u.x + sign * need;
-        b.vx += sign * 110 * S;
+        b.vx += sign * 110 * V;
       }
     }
     clampBall(b);
@@ -448,8 +449,8 @@ function unpinBall(s, dt) {
       const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
       b.x += n.x * (rr + 2);
       b.y += n.y * (rr + 2);
-      b.vx = n.x * 260 * S;
-      b.vy = n.y * 260 * S;
+      b.vx = n.x * 260 * V;
+      b.vy = n.y * 260 * V;
       s.squeezeT = 0;
       clampBall(b);
       emit(s, { type: 'nudge', x: b.x, y: b.y });
@@ -537,8 +538,8 @@ function checkStuck(s, dt) {
     s.stuckT += dt;
     if (s.stuckT >= CONFIG.match.stuckSeconds) {
       const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
-      b.vx += n.x * 160 * S;
-      b.vy += n.y * 160 * S;
+      b.vx += n.x * 160 * V;
+      b.vy += n.y * 160 * V;
       s.stuckT = 0;
       emit(s, { type: 'nudge', x: b.x, y: b.y });
     }

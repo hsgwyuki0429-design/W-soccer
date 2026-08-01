@@ -4,7 +4,8 @@
 
 import { CONFIG } from './config.js';
 
-const S = CONFIG.world.scale;
+const S = CONFIG.world.scale;              // 大きさ
+const V = S * CONFIG.world.pace;           // 速度
 
 const reduced = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -35,7 +36,7 @@ function push(fx, p) {
 
 export function burst(fx, x, y, dx, dy, color, count = 12, speed = 220) {
   if (reduced) count = Math.ceil(count * 0.4);
-  speed *= S;
+  speed *= V;
   const base = Math.atan2(dy, dx);
   for (let i = 0; i < count; i++) {
     const a = base + (Math.random() - 0.5) * 1.9;
@@ -58,12 +59,12 @@ export function sparkle(fx, x, y, color, count = 18, spread = 70) {
   spread *= S;
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const sp = (60 + Math.random() * 320) * S;
+    const sp = (60 + Math.random() * 320) * V;
     push(fx, {
       x: x + Math.cos(a) * Math.random() * spread,
       y: y + Math.sin(a) * Math.random() * spread,
       vx: Math.cos(a) * sp,
-      vy: Math.sin(a) * sp - 60 * S,
+      vy: Math.sin(a) * sp - 60 * V,
       life: 0.5 + Math.random() * 0.6,
       max: 1.1,
       r: (1.2 + Math.random() * 2.6) * S,

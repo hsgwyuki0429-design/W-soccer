@@ -8,6 +8,7 @@ import { PHASE, goalMouth } from './game.js';
 const F = CONFIG.field;
 const B = CONFIG.bot;
 const S = CONFIG.world.scale;
+const P = CONFIG.world.pace;
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rnd = (a) => (Math.random() * 2 - 1) * a;
@@ -59,7 +60,7 @@ export function updateBot(bot, s, intents, dt) {
     const dy = plan.ty - u.y;
     const d = Math.hypot(dx, dy);
     // 近づいたら減速（人間の詰め方に近づける）
-    const gain = clamp(d / 46, 0, 1) * B.speedMultiplier;
+    const gain = clamp(d / (46 * S), 0, 1) * B.speedMultiplier;
     const n = norm(dx, dy);
     intents[u.index] = {
       move: { x: n.x * gain, y: n.y * gain },
@@ -140,7 +141,7 @@ function chooseKick(s, u, mate, attackY, mouth) {
   if (mate && mate !== u) {
     // ボールの到達時間ぶんだけ相方の動きを先読みする
     const raw = Math.hypot(mate.x - ball.x, mate.y - ball.y);
-    const lead = clamp(raw / (380 * S), 0, 0.6);
+    const lead = clamp(raw / B.passLeadSpeed, 0, 0.6 / CONFIG.world.pace);
     const mateLead = {
       x: mate.x + mate.vx * lead,
       y: mate.y + mate.vy * lead,
@@ -218,7 +219,7 @@ function predictBall(ball, u, speed) {
     px = ball.x + ball.vx * decay;
     py = ball.y + ball.vy * decay;
     t = Math.hypot(px - u.x, py - u.y) / Math.max(speed, 1);
-    t = Math.min(t, 0.85);
+    t = Math.min(t, 0.85 / P);   // 先読みの上限は時間。ボールが遅くなれば伸ばす
   }
   return {
     x: clamp(px, 10 * S, F.w - 10 * S),

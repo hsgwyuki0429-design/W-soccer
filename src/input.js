@@ -58,7 +58,8 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
       born: now,
       alpha: 1,
       dying: 0,
-      history: [{ x: p.x, y: p.y, t: now }],   // フリックの起点を探すのに使う
+      // フリックの起点を探すのに使う。t は「動いた時刻」、rest は「そこで止まっている時間」。
+      history: [{ x: p.x, y: p.y, t: now, rest: 0 }],
     };
   }
 
@@ -69,15 +70,14 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
 
     const h = pt.history;
     const last = h[h.length - 1];
-    // 動いていないなら点を増やさず、時刻だけ進める。
-    // pointerup は直前の move と同座標で来ることが多く、そのまま積むと
-    // 「長さ0の最終区間」ができてフリック判定が即座に打ち切られる。
-    // 時刻だけ進めておけば、指を止めてから離した場合はその区間の速さが
-    // 落ちるので、意図どおり「払っていない」と判定される。
+    // 動いていないなら点を増やさず、その場に留まっている時間だけを積む。
+    // 停止時間を区間の所要時間に混ぜてはいけない。pointerup は直前の move と
+    // 同座標で、しかも数十ms遅れて届くことがあり、それを速さの計算に含めると
+    // 「速く払ったのに発火しない」が起きる（実測で3377px/sでも落ちた）。
     if (last && Math.hypot(x - last.x, y - last.y) < 1) {
-      last.t = now;
+      last.rest = now - last.t;
     } else {
-      h.push({ x, y, t: now });
+      h.push({ x, y, t: now, rest: 0 });
     }
     // 遡るのは flickMaxMs までなので、その倍も持てば十分
     const cutoff = now - S.flickMaxMs * 2;
@@ -93,6 +93,8 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
     const h = pt.history;
     if (h.length < 2) return null;
     const last = h[h.length - 1];
+    // 払ったあと指を止めてから離したなら、それは払っていない扱い
+    if ((last.rest || 0) > S.flickRestMs) return null;
     let i = h.length - 1;
     while (i > 0) {
       const a = h[i - 1], b = h[i];

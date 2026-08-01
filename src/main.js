@@ -99,7 +99,13 @@ function leaveVersus() {
 
 net.on('status', (st) => {
   if (st === 'waiting') { ui.showWaiting(); return; }
-  if (st === 'error') { ui.showNetError('サーバーに繋がりませんでした'); running = false; return; }
+  if (st === 'error') {
+    // 一度も繋がっていない失敗。よくある原因はホスティング側が
+    // WebSocket を持っていないこと（例：GitHub Pages は静的配信のみ）。
+    ui.showNetError('このページは対人戦に対応していないか、サーバーに接続できません。', false);
+    running = false;
+    return;
+  }
   if (st === 'gone') {
     versus = false;
     running = false;

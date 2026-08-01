@@ -18,6 +18,7 @@ export const PHASE = {
 };
 
 const F = CONFIG.field;
+const S = CONFIG.world.scale;   // ワールド空間の速度・距離はこれに追従する
 const goalLeft = () => (F.w - F.goalWidth) / 2;
 const goalRight = () => (F.w + F.goalWidth) / 2;
 
@@ -73,12 +74,12 @@ export function createState() {
     score: [0, 0],
     winner: -1,
     units: [
-      makeUnit(0, TEAM_PLAYER, 150, 600),
-      makeUnit(1, TEAM_PLAYER, 300, 600),
-      makeUnit(2, TEAM_BOT, 150, 200),
-      makeUnit(3, TEAM_BOT, 300, 200),
+      makeUnit(0, TEAM_PLAYER, 150 * S, 600 * S),
+      makeUnit(1, TEAM_PLAYER, 300 * S, 600 * S),
+      makeUnit(2, TEAM_BOT, 150 * S, 200 * S),
+      makeUnit(3, TEAM_BOT, 300 * S, 200 * S),
     ],
-    ball: { x: F.w / 2, y: 665, vx: 0, vy: 0 },
+    ball: { x: F.w / 2, y: 665 * S, vx: 0, vy: 0 },
     heatT: 0,          // 秒。0..rampSeconds
     kicker: -1,        // 直近にボールを蹴った駒（受け手が触るまで有効）
     lastTouch: -1,
@@ -107,9 +108,9 @@ export function restart(s) {
 
 // 失点した側（= possess）のボールで再開。ボールは失点側の守備サードへ。
 function placeKickoff(s, possess) {
-  const rows = [600, 200];              // team0 は下（自陣 y 大）、team1 は上
+  const rows = [600 * S, 200 * S];              // team0 は下（自陣 y 大）、team1 は上
   for (const u of s.units) {
-    u.x = u.side === 0 ? 150 : 300;
+    u.x = (u.side === 0 ? 150 : 300) * S;
     u.y = rows[u.team];
     u.vx = u.vy = 0;
     u.cooldown = 0;
@@ -119,7 +120,7 @@ function placeKickoff(s, possess) {
     u.faceY = u.team === TEAM_PLAYER ? -1 : 1;
   }
   s.ball.x = F.w / 2;
-  s.ball.y = possess === TEAM_PLAYER ? 665 : 135;
+  s.ball.y = (possess === TEAM_PLAYER ? 665 : 135) * S;
   s.ball.vx = 0;
   s.ball.vy = 0;
   s.kicker = -1;
@@ -316,9 +317,9 @@ function integrateBall(s, dt, heat) {
 
 function wall(s, b) {
   const sp = Math.hypot(b.vx, b.vy);
-  if (sp > 60 && s.wallCool <= 0) {
+  if (sp > 60 * S && s.wallCool <= 0) {
     s.wallCool = 0.08;
-    emit(s, { type: 'wall', x: b.x, y: b.y, strength: clamp(sp / 500, 0, 1) });
+    emit(s, { type: 'wall', x: b.x, y: b.y, strength: clamp(sp / (500 * S), 0, 1) });
   }
 }
 
@@ -342,11 +343,11 @@ function resolveUnitUnit(s) {
         const imp = -(1 + CONFIG.unit.bounce) * rvn * 0.5;
         a.vx -= imp * nx; a.vy -= imp * ny;
         b.vx += imp * nx; b.vy += imp * ny;
-        if (Math.abs(rvn) > 180) {
+        if (Math.abs(rvn) > 180 * S) {
           emit(s, {
             type: 'bump',
             x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
-            strength: clamp(Math.abs(rvn) / 600, 0, 1),
+            strength: clamp(Math.abs(rvn) / (600 * S), 0, 1),
           });
         }
       }
@@ -382,7 +383,7 @@ function resolveUnitBall(s, heat, dt) {
           type: 'touch',
           unit: u.index, team: u.team,
           x: b.x, y: b.y,
-          strength: clamp(Math.abs(vn) / 420, 0, 1),
+          strength: clamp(Math.abs(vn) / (420 * S), 0, 1),
         });
       }
       registerTouch(s, u, false);
@@ -429,12 +430,12 @@ function unpinBall(s, dt) {
         const need = Math.sqrt(Math.max(1, rr * rr - dx * dx));
         const sign = dy >= 0 ? 1 : -1;
         b.y = u.y + sign * need;
-        b.vy += sign * 110;
+        b.vy += sign * 110 * S;
       } else if (horizontal && !vertical) {
         const need = Math.sqrt(Math.max(1, rr * rr - dy * dy));
         const sign = dx >= 0 ? 1 : -1;
         b.x = u.x + sign * need;
-        b.vx += sign * 110;
+        b.vx += sign * 110 * S;
       }
     }
     clampBall(b);
@@ -447,8 +448,8 @@ function unpinBall(s, dt) {
       const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
       b.x += n.x * (rr + 2);
       b.y += n.y * (rr + 2);
-      b.vx = n.x * 260;
-      b.vy = n.y * 260;
+      b.vx = n.x * 260 * S;
+      b.vy = n.y * 260 * S;
       s.squeezeT = 0;
       clampBall(b);
       emit(s, { type: 'nudge', x: b.x, y: b.y });
@@ -536,8 +537,8 @@ function checkStuck(s, dt) {
     s.stuckT += dt;
     if (s.stuckT >= CONFIG.match.stuckSeconds) {
       const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
-      b.vx += n.x * 160;
-      b.vy += n.y * 160;
+      b.vx += n.x * 160 * S;
+      b.vy += n.y * 160 * S;
       s.stuckT = 0;
       emit(s, { type: 'nudge', x: b.x, y: b.y });
     }

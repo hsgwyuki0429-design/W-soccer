@@ -10,6 +10,7 @@ import { createAudio } from './audio.js';
 import { createUI } from './ui.js';
 import * as FX from './effects.js';
 
+const S = CONFIG.world.scale;
 const STEP = 1 / 60;
 const MAX_STEPS = 5;
 
@@ -56,7 +57,7 @@ function onPrimary() {
 
 function resize() {
   const v = renderer.resize();
-  ui.setUnit(v.cssScale, v.netTop);
+  ui.setUnit(v.uiScale, v.netTop);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
@@ -73,7 +74,7 @@ function handleEvents(events) {
     switch (e.type) {
       case 'kick': {
         const color = COLORS.team[e.team];
-        FX.burst(fx, e.x, e.y, e.dx, e.dy, color, 14, 260);
+        FX.burst(fx, e.x, e.y, e.dx, e.dy, color, 14, 260);   // speed は effects 側でスケール
         FX.ripple(fx, e.x, e.y, color, 20);
         FX.shake(fx, 0.09);
         audio.kick(e.power);
@@ -131,7 +132,7 @@ function handleEvents(events) {
         FX.flash(fx, color, 0.7);
         FX.shake(fx, 1);
         FX.hitstop(fx, 0.09);
-        FX.sparkle(fx, e.x, Math.max(30, Math.min(e.y, CONFIG.field.h - 30)), color, 30, 90);
+        FX.sparkle(fx, e.x, Math.max(30 * S, Math.min(e.y, CONFIG.field.h - 30 * S)), color, 30, 90);
         audio.goal();
         buzz([26, 40, 70]);
         ui.banner('GOAL', e.ownGoal ? 'OWN GOAL' : '', CONFIG.match.goalPause * 1000 - 200);
@@ -198,7 +199,7 @@ function tick(dt) {
   // 見た目のフィードバック（純粋ロジックの外側）
   if (state.phase === PHASE.PLAY) {
     const b = state.ball;
-    if (Math.hypot(b.vx, b.vy) > 60) FX.trailPoint(fx, b.x, b.y, heatRatio(state));
+    if (Math.hypot(b.vx, b.vy) > 60 * S) FX.trailPoint(fx, b.x, b.y, heatRatio(state));
     for (const u of state.units) {
       if (u.dashT > 0) FX.ghost(fx, u.x, u.y, CONFIG.unit.radius, COLORS.team[u.team]);
     }

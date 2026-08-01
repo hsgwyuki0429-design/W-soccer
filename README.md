@@ -22,10 +22,10 @@ npm start                       # node server.js（依存ゼロ）
 
 ビルド成果物がないので、リポジトリの中身をそのまま配信すれば動きます。
 
-**GitHub Pages** — `main` への push で `.github/workflows/pages.yml` が配信します。
-初回だけ **Settings → Pages → Source** を「GitHub Actions」に切り替えてください。
-公開URLは `https://<user>.github.io/W-soccer/` です（サブパス配信でも動くよう、
-アセット参照はすべて相対パスにしてあります）。
+**GitHub Pages** — このリポジトリは Pages のソースが `main` ブランチのルートに設定済みで、
+`main` への push で自動的に配信されます（ワークフローは不要。`.nojekyll` で Jekyll 処理を止めています）。
+公開URLは <https://hsgwyuki0429-design.github.io/W-soccer/> です。
+サブパス配信になるため、アセット参照はすべて相対パスにしてあります。
 
 **Render** — リポジトリを指定すれば `render.yaml` を読んで静的サイトとして配信します。
 Web Service として動かしたい場合は `render.yaml` 末尾のコメントの設定に差し替えてください。
@@ -59,7 +59,7 @@ index.html
 style.css          UI（HUD・メニュー・バナー）の質感
 server.js          依存ゼロの静的サーバー（ローカル / Render Web Service 共用）
 render.yaml        Render Blueprint
-.github/workflows/pages.yml   GitHub Pages への配信
+.nojekyll          GitHub Pages で Jekyll 処理を止める
 src/
   main.js          ループ、状態遷移、各モジュールの結線
   config.js        全チューニング値

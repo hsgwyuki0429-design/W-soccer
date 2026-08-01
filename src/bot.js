@@ -7,6 +7,7 @@ import { PHASE, goalMouth } from './game.js';
 
 const F = CONFIG.field;
 const B = CONFIG.bot;
+const S = CONFIG.world.scale;
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const rnd = (a) => (Math.random() * 2 - 1) * a;
@@ -98,9 +99,9 @@ function planChaser(bot, s, u, mate, attackY, mouth) {
   const lead = predictBall(ball, u, CONFIG.unit.maxSpeed * B.speedMultiplier);
   // ゴール方向の「裏」に回り込む
   const toGoal = norm(mouth.left + F.goalWidth / 2 - lead.x, attackY - lead.y);
-  const back = CONFIG.unit.radius + CONFIG.ball.radius - 6;
-  plan.tx = clamp(lead.x - toGoal.x * back + rnd(18 * B.noise / 0.15), 16, F.w - 16);
-  plan.ty = clamp(lead.y - toGoal.y * back + rnd(18 * B.noise / 0.15), 16, F.h - 16);
+  const back = CONFIG.unit.radius + CONFIG.ball.radius - 6 * S;
+  plan.tx = clamp(lead.x - toGoal.x * back + rnd(18 * S * B.noise / 0.15), 16 * S, F.w - 16 * S);
+  plan.ty = clamp(lead.y - toGoal.y * back + rnd(18 * S * B.noise / 0.15), 16 * S, F.h - 16 * S);
 
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
@@ -114,8 +115,8 @@ function planChaser(bot, s, u, mate, attackY, mouth) {
 
   // タックルダッシュ：相手がボールを持っていて、自分がやや遠いとき
   const foe = nearestFoe(s, u.team, ball.x, ball.y);
-  if (foe && Math.hypot(foe.x - ball.x, foe.y - ball.y) < 46 &&
-      dist < B.tackleRange && dist > reach + 12 && Math.random() < 0.45) {
+  if (foe && Math.hypot(foe.x - ball.x, foe.y - ball.y) < 46 * S &&
+      dist < B.tackleRange && dist > reach + 12 * S && Math.random() < 0.45) {
     const d = norm(ball.x - u.x, ball.y - u.y);
     plan.flick = { x: d.x + rnd(B.noise), y: d.y + rnd(B.noise), reason: 'tackle' };
     return;
@@ -130,7 +131,7 @@ function chooseKick(s, u, mate, attackY, mouth) {
 
   // 1) シュートコースが空いていればシュート（至近ならコースを問わず打つ）
   if (goalDist < B.shootRange &&
-      (goalDist < 140 || laneClear(s, ball, { x: goalX, y: attackY }, u.team, u.index))) {
+      (goalDist < B.pointBlank || laneClear(s, ball, { x: goalX, y: attackY }, u.team, u.index))) {
     const d = norm(goalX - ball.x, attackY - ball.y);
     return { x: d.x + rnd(B.noise * 0.5), y: d.y + rnd(B.noise * 0.5), reason: 'shoot' };
   }
@@ -139,14 +140,14 @@ function chooseKick(s, u, mate, attackY, mouth) {
   if (mate && mate !== u) {
     // ボールの到達時間ぶんだけ相方の動きを先読みする
     const raw = Math.hypot(mate.x - ball.x, mate.y - ball.y);
-    const lead = clamp(raw / 380, 0, 0.6);
+    const lead = clamp(raw / (380 * S), 0, 0.6);
     const mateLead = {
       x: mate.x + mate.vx * lead,
       y: mate.y + mate.vy * lead,
     };
     const md = Math.hypot(mateLead.x - ball.x, mateLead.y - ball.y);
     const forward = (attackY - ball.y) * (attackY - mate.y) >= 0 &&
-                    Math.abs(attackY - mate.y) <= Math.abs(attackY - ball.y) + 90;
+                    Math.abs(attackY - mate.y) <= Math.abs(attackY - ball.y) + 90 * S;
     if (md > B.passRange[0] && md < B.passRange[1] && forward &&
         laneClear(s, ball, mateLead, u.team, u.index)) {
       const d = norm(mateLead.x - ball.x, mateLead.y - ball.y);
@@ -157,7 +158,7 @@ function chooseKick(s, u, mate, attackY, mouth) {
   // 3) 押し込まれているなら大きくクリア
   const pressure = nearestFoe(s, u.team, u.x, u.y);
   const inOwnThird = Math.abs(u.y - (attackY === 0 ? F.h : 0)) < F.h * 0.3;
-  if (inOwnThird && pressure && Math.hypot(pressure.x - u.x, pressure.y - u.y) < 70) {
+  if (inOwnThird && pressure && Math.hypot(pressure.x - u.x, pressure.y - u.y) < 70 * S) {
     const d = norm(
       (u.x < F.w / 2 ? -0.5 : 0.5) + rnd(0.3),
       (attackY - u.y) > 0 ? 1 : -1
@@ -173,19 +174,19 @@ function planSupport(bot, s, u, chaser, attackY, defendY) {
   const ball = s.ball;
   const plan = getPlan(bot, u);
   const attacking = s.possess === bot.team;
-  const jitter = 26 * (B.noise / 0.15);
+  const jitter = 26 * S * (B.noise / 0.15);
 
   if (attacking) {
     // パスを受けられる位置：ボールより少し前、逆サイド寄り
     const side = ball.x < F.w / 2 ? 1 : -1;
-    plan.tx = clamp(ball.x + side * 118 + rnd(jitter), 40, F.w - 40);
-    plan.ty = clamp(ball.y + (attackY > ball.y ? 1 : -1) * 120 + rnd(jitter), 40, F.h - 40);
+    plan.tx = clamp(ball.x + side * 118 * S + rnd(jitter), 40 * S, F.w - 40 * S);
+    plan.ty = clamp(ball.y + (attackY > ball.y ? 1 : -1) * 120 * S + rnd(jitter), 40 * S, F.h - 40 * S);
   } else {
     // 守備：ボールと自ゴールを結ぶ線上
     const gx = F.w / 2;
     const t = 0.42;
-    plan.tx = clamp(ball.x + (gx - ball.x) * t + rnd(jitter), 30, F.w - 30);
-    plan.ty = clamp(ball.y + (defendY - ball.y) * t + rnd(jitter), 30, F.h - 30);
+    plan.tx = clamp(ball.x + (gx - ball.x) * t + rnd(jitter), 30 * S, F.w - 30 * S);
+    plan.ty = clamp(ball.y + (defendY - ball.y) * t + rnd(jitter), 30 * S, F.h - 30 * S);
   }
 
   // 支援側もボールが目の前に転がってきたら蹴る
@@ -220,8 +221,8 @@ function predictBall(ball, u, speed) {
     t = Math.min(t, 0.85);
   }
   return {
-    x: clamp(px, 10, F.w - 10),
-    y: clamp(py, 10, F.h - 10),
+    x: clamp(px, 10 * S, F.w - 10 * S),
+    y: clamp(py, 10 * S, F.h - 10 * S),
   };
 }
 
@@ -247,7 +248,7 @@ function laneClear(s, from, to, team, ignoreIndex) {
     if (u.team === team || u.index === ignoreIndex) continue;
     let t = ((u.x - from.x) * dx + (u.y - from.y) * dy) / l2;
     t = clamp(t, 0, 1);
-    if (t * len < 44) continue;                     // 足元は無視
+    if (t * len < B.laneFootSkip) continue;                     // 足元は無視
     const px = from.x + dx * t, py = from.y + dy * t;
     if (Math.hypot(u.x - px, u.y - py) < CONFIG.unit.radius + B.laneClearRadius) return false;
   }

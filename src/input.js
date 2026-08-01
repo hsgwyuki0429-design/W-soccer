@@ -1,5 +1,9 @@
 // input.js — タッチ / マウス / キーボード を「意図」へ変換する。
 // game.js には触れない。出すのは intents 配列と、描画用のスティック状態だけ。
+//
+// ドラッグ中は「進行方向が変わる」だけで、どれだけ速く動かしても何も起きない。
+// アクション（キック / 体当たり / ダッシュ）が出るのは、
+// スワイプしながら指を離した瞬間だけ。止まった状態で離せば何も起きない。
 
 import { CONFIG } from './config.js';
 
@@ -13,8 +17,9 @@ const S = CONFIG.stick;
 export function createInput(canvas, toLogical, onFeedback = () => {}) {
   // side 0 = 左半画面 → 駒0 / side 1 = 右半画面 → 駒1（担当は固定）
   const sticks = [null, null];
+  const released = [null, null];   // 離した瞬間に確定したアクション（fill が回収する）
   const keys = new Set();
-  const keyFlick = [null, null];
+  const keyAction = [null, null];
   let anyPointer = false;
 
   function sideOf(logicalX) {
@@ -31,9 +36,29 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
       alpha: 1,
       dying: 0,
       history: [{ x: p.x, y: p.y, t: now }],
-      flickLock: 0,
-      flick: null,
     };
+  }
+
+  function record(st, x, y, now) {
+    st.curX = x; st.curY = y;
+    st.history.push({ x, y, t: now });
+    // 判定に使うのは直近の窓だけなので、それより古い点は捨てる
+    const cutoff = now - S.releaseWindowMs * 2;
+    while (st.history.length > 2 && st.history[0].t < cutoff) st.history.shift();
+  }
+
+  /** 離した瞬間の「直前 releaseWindowMs の移動」を見てアクションを決める */
+  function resolveRelease(st, now) {
+    const cutoff = now - S.releaseWindowMs;
+    let ref = st.history[0];
+    for (let i = st.history.length - 1; i >= 0; i--) {
+      if (st.history[i].t <= cutoff) { ref = st.history[i]; break; }
+    }
+    const dx = st.curX - ref.x;
+    const dy = st.curY - ref.y;
+    const d = Math.hypot(dx, dy);
+    if (d < S.releaseDist) return null;      // 止めてから離した = 何も起きない
+    return { x: dx / d, y: dy / d };
   }
 
   function onDown(e) {
@@ -54,39 +79,23 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
     for (const st of sticks) {
       if (!st || st.id !== e.pointerId || st.dying) continue;
       const p = toLogical(e.clientX, e.clientY);
-      st.curX = p.x; st.curY = p.y;
-      st.history.push({ x: p.x, y: p.y, t: now });
-      while (st.history.length > 24) st.history.shift();
-      detectFlick(st, now);
+      record(st, p.x, p.y, now);
     }
     e.preventDefault();
   }
 
   function onUp(e) {
+    const now = performance.now();
     for (let i = 0; i < 2; i++) {
       const st = sticks[i];
-      if (st && st.id === e.pointerId) st.dying = 1;
+      if (!st || st.id !== e.pointerId || st.dying) continue;
+      // 離した位置も履歴に入れてから判定する（up の座標が move と違う環境がある）
+      const p = toLogical(e.clientX, e.clientY);
+      record(st, p.x, p.y, now);
+      released[i] = resolveRelease(st, now);
+      st.dying = 1;
     }
     anyPointer = sticks.some((s) => s && !s.dying);
-  }
-
-  function detectFlick(st, now) {
-    if (now < st.flickLock) return;
-    const cutoff = now - S.flickWindowMs;
-    let ref = null;
-    for (let i = st.history.length - 1; i >= 0; i--) {
-      if (st.history[i].t <= cutoff) { ref = st.history[i]; break; }
-    }
-    if (!ref) ref = st.history[0];
-    const dx = st.curX - ref.x;
-    const dy = st.curY - ref.y;
-    if (Math.hypot(dx, dy) >= S.flickDist) {
-      const l = Math.hypot(dx, dy);
-      st.flick = { x: dx / l, y: dy / l };
-      st.flickLock = now + S.flickLockMs;
-      st.history.length = 0;
-      st.history.push({ x: st.curX, y: st.curY, t: now });
-    }
   }
 
   canvas.addEventListener('pointerdown', onDown, { passive: false });
@@ -97,15 +106,15 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
 
   // ---- キーボード（デスクトップ検証用） ----
   const KEYMAP = {
-    0: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', flick: 'KeyE' },
-    1: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', flick: 'ShiftRight' },
+    0: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', act: 'KeyE' },
+    1: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', act: 'ShiftRight' },
   };
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     keys.add(e.code);
     for (let i = 0; i < 2; i++) {
-      if (e.code === KEYMAP[i].flick) keyFlick[i] = true;
+      if (e.code === KEYMAP[i].act) keyAction[i] = true;
     }
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
@@ -155,13 +164,15 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
           const dx = st.knobX - st.baseX;
           const dy = st.knobY - st.baseY;
           move = { x: dx / S.maxRadius, y: dy / S.maxRadius };
-          if (st.flick) { flick = st.flick; st.flick = null; }
         }
+
+        // 離した瞬間に確定したアクションを1回だけ渡す
+        if (released[side]) { flick = released[side]; released[side] = null; }
 
         const km = keyboardMove(side);
         if (km) move = km;
-        if (keyFlick[side]) {
-          keyFlick[side] = null;
+        if (keyAction[side]) {
+          keyAction[side] = null;
           const l = Math.hypot(move.x, move.y);
           flick = l > 0.1
             ? { x: move.x / l, y: move.y / l }
@@ -176,8 +187,9 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
 
     reset() {
       sticks[0] = sticks[1] = null;
+      released[0] = released[1] = null;
       keys.clear();
-      keyFlick[0] = keyFlick[1] = null;
+      keyAction[0] = keyAction[1] = null;
     },
   };
 }

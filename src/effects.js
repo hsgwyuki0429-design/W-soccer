@@ -1,5 +1,10 @@
 // effects.js — パーティクル / 残像 / 画面シェイク / ヒットストップ / パスの糸。
 // 状態を持つだけ。描画は render.js が読み取って行う。
+// 距離・速度はワールド空間なので、コートのスケールに追従させる。
+
+import { CONFIG } from './config.js';
+
+const S = CONFIG.world.scale;
 
 const reduced = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -30,6 +35,7 @@ function push(fx, p) {
 
 export function burst(fx, x, y, dx, dy, color, count = 12, speed = 220) {
   if (reduced) count = Math.ceil(count * 0.4);
+  speed *= S;
   const base = Math.atan2(dy, dx);
   for (let i = 0; i < count; i++) {
     const a = base + (Math.random() - 0.5) * 1.9;
@@ -40,7 +46,7 @@ export function burst(fx, x, y, dx, dy, color, count = 12, speed = 220) {
       vy: Math.sin(a) * sp,
       life: 0.3 + Math.random() * 0.28,
       max: 0.58,
-      r: 1.4 + Math.random() * 2.4,
+      r: (1.4 + Math.random() * 2.4) * S,
       color,
       drag: 0.06,
     });
@@ -49,17 +55,18 @@ export function burst(fx, x, y, dx, dy, color, count = 12, speed = 220) {
 
 export function sparkle(fx, x, y, color, count = 18, spread = 70) {
   if (reduced) count = Math.ceil(count * 0.4);
+  spread *= S;
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const sp = 60 + Math.random() * 320;
+    const sp = (60 + Math.random() * 320) * S;
     push(fx, {
       x: x + Math.cos(a) * Math.random() * spread,
       y: y + Math.sin(a) * Math.random() * spread,
       vx: Math.cos(a) * sp,
-      vy: Math.sin(a) * sp - 60,
+      vy: Math.sin(a) * sp - 60 * S,
       life: 0.5 + Math.random() * 0.6,
       max: 1.1,
-      r: 1.2 + Math.random() * 2.6,
+      r: (1.2 + Math.random() * 2.6) * S,
       color,
       drag: 0.12,
     });
@@ -73,6 +80,7 @@ export function ghost(fx, x, y, r, color) {
 }
 
 export function ripple(fx, x, y, color, r = 26) {
+  r *= S;
   fx.ripples.push({ x, y, r, color, life: 0.34, max: 0.34 });
   if (fx.ripples.length > 24) fx.ripples.shift();
 }
@@ -104,7 +112,7 @@ export function flash(fx, color, amount = 0.75) {
 
 export function trailPoint(fx, x, y, heat) {
   const last = fx.trail[fx.trail.length - 1];
-  if (last && Math.hypot(last.x - x, last.y - y) < 3) return;
+  if (last && Math.hypot(last.x - x, last.y - y) < 3 * S) return;
   fx.trail.push({ x, y, life: 0.32, max: 0.32, heat });
   if (fx.trail.length > 34) fx.trail.shift();
 }
@@ -129,7 +137,7 @@ export function updateEffects(fx, dt) {
 
   // シェイク（trauma^2 で立ち上がりを鋭く）
   fx.trauma = Math.max(0, fx.trauma - dt * 1.9);
-  const mag = fx.trauma * fx.trauma * 16;
+  const mag = fx.trauma * fx.trauma * 16 * S;
   fx.shakeX = (Math.random() * 2 - 1) * mag;
   fx.shakeY = (Math.random() * 2 - 1) * mag;
 

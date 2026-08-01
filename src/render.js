@@ -6,6 +6,7 @@ import { CONFIG, COLORS, VIEW, TEAM_PLAYER } from './config.js';
 import { PHASE, goalMouth, heatRatio, isMatchPoint } from './game.js';
 
 const F = CONFIG.field;
+const S = CONFIG.world.scale;   // 450x800 設計の見た目値をコートに追従させる
 
 // ---------------------------------------------------------------- color utils
 
@@ -55,6 +56,8 @@ export function createRenderer(canvas) {
     view.cssW = w;
     view.cssH = h;
     view.cssScale = scale;
+    // DOM の UI は世界の縮尺に引きずられないよう、設計値(450x800)基準の倍率を渡す
+    view.uiScale = scale * S;
     // フィールド上端（CSS px）と、その上のゴールネット上端。HUD帯の高さに使う。
     view.fieldTop = (h - VIEW.h * scale) * 0.5 + VIEW.padTop * scale;
     view.netTop = view.fieldTop - CONFIG.field.goalDepth * scale;
@@ -124,32 +127,33 @@ function drawTurf(ctx) {
 function drawLines(ctx) {
   ctx.save();
   ctx.strokeStyle = COLORS.line;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 * S;
+  const m = 6 * S;
 
   // 外枠
-  ctx.strokeRect(6, 6, F.w - 12, F.h - 12);
+  ctx.strokeRect(m, m, F.w - m * 2, F.h - m * 2);
 
   // センターライン + サークル
   ctx.beginPath();
-  ctx.moveTo(6, F.h / 2);
-  ctx.lineTo(F.w - 6, F.h / 2);
+  ctx.moveTo(m, F.h / 2);
+  ctx.lineTo(F.w - m, F.h / 2);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(F.w / 2, F.h / 2, 62, 0, Math.PI * 2);
+  ctx.arc(F.w / 2, F.h / 2, 62 * S, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.fillStyle = COLORS.line;
   ctx.beginPath();
-  ctx.arc(F.w / 2, F.h / 2, 3.5, 0, Math.PI * 2);
+  ctx.arc(F.w / 2, F.h / 2, 3.5 * S, 0, Math.PI * 2);
   ctx.fill();
 
   // ペナルティエリア / ゴールエリア
-  const pw = 250, pd = 104, gw = 158, gd = 42;
+  const pw = 250 * S, pd = 104 * S, gw = 158 * S, gd = 42 * S;
   for (const top of [true, false]) {
-    const y0 = top ? 6 : F.h - 6 - pd;
+    const y0 = top ? m : F.h - m - pd;
     ctx.strokeRect((F.w - pw) / 2, y0, pw, pd);
-    const gy = top ? 6 : F.h - 6 - gd;
+    const gy = top ? m : F.h - m - gd;
     ctx.strokeRect((F.w - gw) / 2, gy, gw, gd);
   }
   ctx.restore();
@@ -166,16 +170,16 @@ function drawGoals(ctx, s) {
 
     // ネットの縦糸
     ctx.strokeStyle = 'rgba(255,255,255,0.09)';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 * S;
     ctx.beginPath();
-    for (let x = left + 10; x < right; x += 10) {
+    for (let x = left + 10 * S; x < right; x += 10 * S) {
       ctx.moveTo(x, y0);
       ctx.lineTo(x, y0 + d);
     }
     ctx.stroke();
 
     ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * S;
     ctx.beginPath();
     ctx.moveTo(left, top ? 0 : F.h);
     ctx.lineTo(left, y0 + (top ? 0 : d));
@@ -209,8 +213,8 @@ function drawUnits(ctx, s, fx, input) {
     // 盤面から数ミリ浮かせるだけのソフトシャドウ
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.38)';
-    ctx.shadowBlur = 12;
-    ctx.shadowOffsetY = 5;
+    ctx.shadowBlur = 12 * S;
+    ctx.shadowOffsetY = 5 * S;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(u.x, u.y, r, 0, Math.PI * 2);
@@ -219,9 +223,9 @@ function drawUnits(ctx, s, fx, input) {
 
     // 内側のわずかな締め
     ctx.strokeStyle = 'rgba(0,0,0,0.14)';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = r * 0.09;
     ctx.beginPath();
-    ctx.arc(u.x, u.y, r - 1.5, 0, Math.PI * 2);
+    ctx.arc(u.x, u.y, r * 0.94, 0, Math.PI * 2);
     ctx.stroke();
 
     // 担当ピップ（左=1点 / 右=2点）。どちらの親指の駒かを一瞬で。
@@ -229,9 +233,9 @@ function drawUnits(ctx, s, fx, input) {
       ctx.fillStyle = 'rgba(255,255,255,0.62)';
       const n = u.side + 1;
       for (let i = 0; i < n; i++) {
-        const ox = (i - (n - 1) / 2) * 8;
+        const ox = (i - (n - 1) / 2) * r * 0.42;
         ctx.beginPath();
-        ctx.arc(u.x + ox, u.y, 2.8, 0, Math.PI * 2);
+        ctx.arc(u.x + ox, u.y, r * 0.15, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -240,10 +244,10 @@ function drawUnits(ctx, s, fx, input) {
     if (u.cooldown > 0) {
       const t = u.cooldown / CONFIG.unit.cooldown;
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.lineWidth = 2.6;
+      ctx.lineWidth = 2.6 * S;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(u.x, u.y, r + 5.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
+      ctx.arc(u.x, u.y, r + 5.5 * S, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
       ctx.stroke();
       ctx.lineCap = 'butt';
     }
@@ -253,9 +257,9 @@ function drawUnits(ctx, s, fx, input) {
       const st = input.sticks[u.side];
       if (st) {
         ctx.strokeStyle = `rgba(255,255,255,${0.28 * st.alpha})`;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.5 * S;
         ctx.beginPath();
-        ctx.arc(u.x, u.y, r + 11, 0, Math.PI * 2);
+        ctx.arc(u.x, u.y, r + 11 * S, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -270,10 +274,12 @@ function drawBall(ctx, s, fx) {
   const c = mp ? mix(heatColor(ratio), RGB.gold, 0.55 + 0.45 * pulse) : heatColor(ratio);
   const r = CONFIG.ball.radius;
 
-  // 発光
-  const glowR = r * (3.1 + ratio * 1.4 + (mp ? pulse * 0.9 : 0));
+  // 発光。コートを広げてボールが小さく見えるぶん、下限を厚めにしてある
+  // （「3メートル離れても状況が読めるか」の合格ラインを守るため）。
+  const glowR = r * (4.0 + ratio * 1.6 + (mp ? pulse * 1.0 : 0));
   const g = ctx.createRadialGradient(b.x, b.y, r * 0.4, b.x, b.y, glowR);
-  g.addColorStop(0, rgba(c, 0.42 * (0.35 + ratio * 0.65 + (mp ? 0.35 : 0))));
+  g.addColorStop(0, rgba(c, 0.46 * (0.6 + ratio * 0.4 + (mp ? 0.35 : 0))));
+  g.addColorStop(0.45, rgba(c, 0.16 * (0.6 + ratio * 0.4)));
   g.addColorStop(1, rgba(c, 0));
   ctx.fillStyle = g;
   ctx.beginPath();
@@ -282,8 +288,8 @@ function drawBall(ctx, s, fx) {
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 3;
+  ctx.shadowBlur = 8 * S;
+  ctx.shadowOffsetY = 3 * S;
   ctx.fillStyle = rgba(c, 1);
   ctx.beginPath();
   ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
@@ -308,7 +314,7 @@ function drawThreads(ctx, fx) {
     const t = th.life / th.max;
     const ease = t * t;                       // すっと消える
     const step = Math.min(th.chain, 8) / 8;
-    const width = 3.4 + step * 5.6;
+    const width = (3.4 + step * 5.6) * S;
     const alpha = (0.78 + step * 0.22) * ease;
 
     const g = ctx.createLinearGradient(th.ax, th.ay, th.bx, th.by);
@@ -318,7 +324,7 @@ function drawThreads(ctx, fx) {
 
     ctx.save();
     ctx.shadowColor = th.color;
-    ctx.shadowBlur = 16 + step * 28;
+    ctx.shadowBlur = (16 + step * 28) * S;
     ctx.strokeStyle = g;
     ctx.lineWidth = width * (0.6 + 0.4 * ease);
     ctx.lineCap = 'round';
@@ -366,7 +372,7 @@ function drawRipples(ctx, fx) {
     const t = rp.life / rp.max;
     ctx.strokeStyle = rp.color;
     ctx.globalAlpha = 0.35 * t;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * S;
     ctx.beginPath();
     ctx.arc(rp.x, rp.y, rp.r * (1.6 - t), 0, Math.PI * 2);
     ctx.stroke();
@@ -398,17 +404,17 @@ export function drawSticks(ctx, view, input) {
     ctx.arc(0, 0, CONFIG.stick.maxRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.24 * a})`;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 * S;
     ctx.stroke();
 
     // ノブ
     const kx = st.knobX - st.baseX, ky = st.knobY - st.baseY;
     ctx.fillStyle = `rgba(255,255,255,${0.16 * a})`;
     ctx.beginPath();
-    ctx.arc(kx, ky, 25, 0, Math.PI * 2);
+    ctx.arc(kx, ky, CONFIG.stick.knobRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.5 * a})`;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.2 * S;
     ctx.stroke();
 
     ctx.restore();

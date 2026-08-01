@@ -8,6 +8,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>PAIR KICK</title>
 <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="apple-mobile-web-app-title" content="PAIR KICK" />
+<meta name="mobile-web-app-capable" content="yes" />
 <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -35,6 +39,10 @@
           <div id="ov-kicker">2対2サッカー</div>
           <h1 id="ov-title">PAIR&nbsp;KICK</h1>
           <p id="ov-body">2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。</p>
+          <div id="ov-opponents" role="group" aria-label="対戦相手">
+            <button class="seg" data-opp="bot">ボット</button>
+            <button class="seg" data-opp="human">対人戦</button>
+          </div>
           <div id="ov-modes" role="group" aria-label="操作方法">
             <button class="seg" data-mode="stick">スティック</button>
             <button class="seg" data-mode="point">ポイント</button>

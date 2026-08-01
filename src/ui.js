@@ -2,8 +2,9 @@
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
 const MODE_KEY = 'pairkick.controlMode';
+const OPP_KEY = 'pairkick.opponent';
 
-export function createUI(onPrimary, onModeChange) {
+export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
 
   const hud = el('hud');
@@ -19,12 +20,34 @@ export function createUI(onPrimary, onModeChange) {
   const ovHints = el('ov-hints');
   const ovBtn = el('ov-btn');
   const ovModes = el('ov-modes');
+  const ovOpps = el('ov-opponents');
   const hintTitle = el('hint-a-t');
   const hintSub = el('hint-a-s');
 
   let mode = 'stick';
   try { mode = localStorage.getItem(MODE_KEY) || 'stick'; } catch (_) {}
   if (mode !== 'stick' && mode !== 'point') mode = 'stick';
+
+  let opponent = 'bot';
+  try { opponent = localStorage.getItem(OPP_KEY) || 'bot'; } catch (_) {}
+  if (opponent !== 'bot' && opponent !== 'human') opponent = 'bot';
+
+  function paintOpp() {
+    for (const b of ovOpps.querySelectorAll('.seg')) {
+      b.classList.toggle('on', b.dataset.opp === opponent);
+    }
+  }
+
+  ovOpps.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovOpps.addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    opponent = b.dataset.opp;
+    try { localStorage.setItem(OPP_KEY, opponent); } catch (_) {}
+    paintOpp();
+  });
 
   function paintMode() {
     for (const b of ovModes.querySelectorAll('.seg')) {
@@ -49,10 +72,12 @@ export function createUI(onPrimary, onModeChange) {
   let bannerTimer = 0;
   let shown = [-1, -1];
   let lockUntil = 0;              // 直前の指残りで即再戦してしまうのを防ぐ
+  let waitingCancel = false;      // 相手待ち中は、ボタンが「やめる」になる
 
   function primary() {
     if (performance.now() < lockUntil) return;
     lockUntil = performance.now() + 400;
+    if (waitingCancel) { waitingCancel = false; onCancel(); return; }
     onPrimary();
   }
 
@@ -67,9 +92,11 @@ export function createUI(onPrimary, onModeChange) {
   });
 
   paintMode();
+  paintOpp();
 
   return {
     get mode() { return mode; },
+    get opponent() { return opponent; },
     applyMode() { onModeChange(mode); },
 
     setUnit(u, hudBand) {
@@ -123,12 +150,49 @@ export function createUI(onPrimary, onModeChange) {
       ovTitle.className = '';
       ovBody.innerHTML = '2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。';
       ovHints.style.display = '';
+      ovOpps.style.display = '';
+      ovModes.style.display = '';
       ovBtn.textContent = 'はじめる';
+      ovBtn.disabled = false;
+      overlay.classList.remove('hidden');
+      lockUntil = performance.now() + 450;
+    },
+
+    /** 対人戦の相手待ち */
+    showWaiting() {
+      ovKicker.textContent = '対人戦';
+      ovTitle.textContent = '相手を待っています';
+      ovTitle.className = 'waiting';
+      ovBody.innerHTML = 'この画面のURLを相手に渡してください。<br>2人そろうと自動で始まります。';
+      ovHints.style.display = 'none';
+      ovOpps.style.display = 'none';
+      ovModes.style.display = 'none';
+      ovBtn.textContent = 'やめる';
+      ovBtn.disabled = false;
+      overlay.classList.remove('hidden');
+      lockUntil = performance.now() + 450;
+      waitingCancel = true;
+    },
+
+    /** 接続エラー・相手の切断 */
+    showNetError(text) {
+      ovKicker.textContent = '対人戦';
+      ovTitle.textContent = '接続が切れました';
+      ovTitle.className = 'lose';
+      ovBody.textContent = text;
+      ovHints.style.display = 'none';
+      ovOpps.style.display = '';
+      ovModes.style.display = '';
+      ovBtn.textContent = 'タイトルへ';
+      ovBtn.disabled = false;
       overlay.classList.remove('hidden');
       lockUntil = performance.now() + 450;
     },
 
     showResult(win, a, b) {
+      waitingCancel = false;
+      ovOpps.style.display = '';
+      ovModes.style.display = '';
       ovKicker.textContent = `${a} — ${b}`;
       ovTitle.textContent = win ? 'WIN' : 'LOSE';
       ovTitle.className = win ? 'win' : 'lose';
@@ -142,6 +206,7 @@ export function createUI(onPrimary, onModeChange) {
     },
 
     hideOverlay() {
+      waitingCancel = false;
       overlay.classList.add('hidden');
     },
 

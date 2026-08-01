@@ -98,6 +98,8 @@ export const CONFIG = {
     minVisibleW: 0.55,   // stick: 同じく横
     pointBias: 0.20,     // point: 視界のこの割合ぶん進行方向の先を見る
     biasFlipSpeed: 0.25, // point: 最高速のこの割合を超えて動いたら、視点の前後を入れ替える
+    keepMargin: w(70),   // point: 相手・自分・ボールを収めるときに外周へ残す余白
+    edgeMargin: w(70),   // コート外をここまで見せてよい（端の駒が画面際に貼り付かないように）
   },
 
   control: {

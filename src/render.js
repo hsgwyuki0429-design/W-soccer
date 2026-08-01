@@ -96,6 +96,11 @@ export function createRenderer(canvas) {
     return view;
   }
 
+  /** 全員（ボール＋4駒）。ポイント操作で必ず画面に収める対象。 */
+  function everyone(s) {
+    return [s.ball, s.units[0], s.units[1], s.units[2], s.units[3]];
+  }
+
   /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ） */
   function focus(s) {
     const pts = [s.ball, s.units[0], s.units[1]];
@@ -115,15 +120,37 @@ export function createRenderer(canvas) {
     };
   }
 
-  function clampCenter(scale) {
+  /** 指定倍率のとき、視点中心が取りうる範囲へ丸める（純粋関数） */
+  function clampedCenter(x, y, scale) {
     const hw = view.cssW / (2 * scale);
     const hh = view.cssH / (2 * scale);
     const gd = CONFIG.field.goalDepth;
-    const x0 = -VIEW.padX, x1 = CONFIG.field.w + VIEW.padX;
+    const em = CAM.edgeMargin;
+    // 横は少しコート外まで見せる。そうしないと、駒がタッチラインに寄ったときに
+    // 画面の端へ貼り付いて、その先が読めなくなる。
+    const x0 = -VIEW.padX - em, x1 = CONFIG.field.w + VIEW.padX + em;
     const y0 = -gd - VIEW.padX, y1 = CONFIG.field.h + gd + VIEW.padX;
+    return {
+      x: (x1 - x0) <= hw * 2 ? (x0 + x1) / 2 : clamp(x, x0 + hw, x1 - hw),
+      y: (y1 - y0) <= hh * 2 ? (y0 + y1) / 2 : clamp(y, y0 + hh, y1 - hh),
+    };
+  }
 
-    cam.x = (x1 - x0) <= hw * 2 ? (x0 + x1) / 2 : clamp(cam.x, x0 + hw, x1 - hw);
-    cam.y = (y1 - y0) <= hh * 2 ? (y0 + y1) / 2 : clamp(cam.y, y0 + hh, y1 - hh);
+  function clampCenter(scale) {
+    const c = clampedCenter(cam.x, cam.y, scale);
+    cam.x = c.x; cam.y = c.y;
+  }
+
+  /** (cx,cy) を中心にしたとき、全員が margin ぶんの余白つきで入る倍率 */
+  function containScale(s, cx, cy) {
+    let hw = 0, hh = 0;
+    for (const e of everyone(s)) {
+      hw = Math.max(hw, Math.abs(e.x - cx));
+      hh = Math.max(hh, Math.abs(e.y - cy));
+    }
+    hw += CAM.keepMargin;
+    hh += CAM.keepMargin;
+    return Math.min(view.cssW / (2 * hw), view.cssH / (2 * hh));
   }
 
   /**
@@ -135,8 +162,8 @@ export function createRenderer(canvas) {
     let want, ty;
 
     if (mode === 'point') {
-      // コートで画面を埋める固定倍率。寄り引きしない。
-      want = fillScale();
+      const lim = limits();
+      const fill = fillScale();
 
       // 「指を置いた先へ進む」操作なので、進む先が広く見えていないと置けない。
       // 上へ向かっているなら駒を画面の下へ、下へ向かっているなら画面の上へ。
@@ -148,7 +175,17 @@ export function createRenderer(canvas) {
       }
       const kb = snap ? 1 : 1 - Math.exp(-dt / 0.55);
       cam.bias += (cam.biasTarget - cam.bias) * kb;
-      ty = f.y + CAM.pointBias * (view.cssH / want) * cam.bias;
+
+      // 視点の中心は自分たち＋ボール。ずらし量は今の倍率から見積もる。
+      ty = f.y + CAM.pointBias * (view.cssH / Math.max(cam.scale, 1e-4)) * cam.bias;
+
+      // その中心から見て、相手も含めた全員が必ず入る倍率を求める。
+      // 収まるなら画面を埋め、収まらないぶんだけ引く。
+      // 中心は後で盤外に出ないよう丸められるので、丸めた後の位置で取り直す
+      // （丸めを無視すると、端に寄ったときに反対側がはみ出す）。
+      want = clamp(Math.min(fill, containScale(s, f.x, ty)), lim.min, fill);
+      const c2 = clampedCenter(f.x, ty, want);
+      want = clamp(Math.min(fill, containScale(s, c2.x, c2.y)), lim.min, fill);
     } else {
       const lim = limits();
       want = clamp(Math.min(view.cssW / f.w, view.cssH / f.h), lim.min, lim.max);
@@ -160,9 +197,11 @@ export function createRenderer(canvas) {
       cam.x = f.x;
       cam.y = ty;
     } else {
-      // 指数補間。位置よりズームをゆっくりにして、寄り引きの揺れを抑える
+      // 指数補間。位置よりズームをゆっくりにして、寄り引きの揺れを抑える。
+      // ただし「引く」方向だけは速くする。ゆっくり引くと、その間だけ
+      // 画面外に出る駒が出てしまうため。
       const kp = 1 - Math.exp(-dt / 0.16);
-      const kz = 1 - Math.exp(-dt / 0.34);
+      const kz = 1 - Math.exp(-dt / (want < cam.scale ? 0.10 : 0.34));
       cam.x += (f.x - cam.x) * kp;
       cam.y += (ty - cam.y) * kp;
       cam.scale += (want - cam.scale) * kz;

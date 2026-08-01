@@ -1,0 +1,17 @@
+{
+  "name": "PAIR KICK",
+  "short_name": "PAIR KICK",
+  "description": "2つの駒、2本の親指。自分自身の両手で協力プレイする、2対2サッカー。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1712",
+  "theme_color": "#0b1712",
+  "lang": "ja",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

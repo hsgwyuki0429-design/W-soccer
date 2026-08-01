@@ -2,7 +2,7 @@
 // プレイエリアはフラット。質感はUI（DOM側）に集中させる。
 // 合格ライン：3メートル離れても状況が読めるか。
 
-import { CONFIG, COLORS, VIEW, TEAM_PLAYER } from './config.js';
+import { CONFIG, COLORS, VIEW } from './config.js';
 import { PHASE, goalMouth, heatRatio, isMatchPoint } from './game.js';
 
 const F = CONFIG.field;
@@ -49,6 +49,23 @@ export function createRenderer(canvas) {
   // 追いかけながら、その広がりに応じてズームする。
   // bias = 視点を進行方向のどちら側へずらすか。-1 で駒が画面下、+1 で画面上。
   const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1, bias: -1, biasTarget: -1 };
+
+  // 自分がどちらのチームか。対人戦で team 1 になったときは盤面を180度回して
+  // 「自分の駒が手前・攻める方向が奥」を保つ。回さないと、上下も左右も逆の
+  // 盤面を操作することになって、担当（左半画面＝左の駒）の意味が壊れる。
+  let myTeam = 0;
+  let flip = false;
+
+  /** 画面の左→右の順に並べた自分の2駒。反転時は世界の左右が入れ替わる。 */
+  /** 見る側から見た色。自分は常にコーラル、相手は常にシアン。 */
+  function teamColor(team) {
+    return COLORS.team[team === myTeam ? 0 : 1];
+  }
+
+  function myUnitsInScreenOrder(s) {
+    const a = s.units[myTeam * 2], b = s.units[myTeam * 2 + 1];
+    return flip ? [b, a] : [a, b];
+  }
 
   const CAM = CONFIG.camera;
 
@@ -103,7 +120,7 @@ export function createRenderer(canvas) {
 
   /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ） */
   function focus(s) {
-    const pts = [s.ball, s.units[0], s.units[1]];
+    const pts = [s.ball, s.units[myTeam * 2], s.units[myTeam * 2 + 1]];
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of pts) {
       if (p.x < minX) minX = p.x;
@@ -169,15 +186,15 @@ export function createRenderer(canvas) {
       // 上へ向かっているなら駒を画面の下へ、下へ向かっているなら画面の上へ。
       // 自駒2つの平均の縦速度で決め、一定以上動いたときだけ向きを切り替える
       // （止まった瞬間に視点が跳ね返らないよう、しきい値未満では前の向きを保つ）。
-      const vy = (s.units[0].vy + s.units[1].vy) / 2;
+      const vy = (s.units[myTeam * 2].vy + s.units[myTeam * 2 + 1].vy) / 2;
       if (Math.abs(vy) > CONFIG.unit.maxSpeed * CAM.biasFlipSpeed) {
-        cam.biasTarget = vy < 0 ? -1 : 1;
+        cam.biasTarget = (flip ? -vy : vy) < 0 ? -1 : 1;
       }
       const kb = snap ? 1 : 1 - Math.exp(-dt / 0.55);
       cam.bias += (cam.biasTarget - cam.bias) * kb;
 
       // 視点の中心は自分たち＋ボール。ずらし量は今の倍率から見積もる。
-      ty = f.y + CAM.pointBias * (view.cssH / Math.max(cam.scale, 1e-4)) * cam.bias;
+      ty = f.y + CAM.pointBias * (view.cssH / Math.max(cam.scale, 1e-4)) * cam.bias * (flip ? -1 : 1);
 
       // その中心から見て、相手も含めた全員が必ず入る倍率を求める。
       // 収まるなら画面を埋め、収まらないぶんだけ引く。
@@ -211,9 +228,10 @@ export function createRenderer(canvas) {
 
   /** canvas 基準の CSS px → ワールド座標（カメラの寄り引きを考慮する） */
   function toWorld(x, y) {
+    const k = flip ? -1 : 1;
     return {
-      x: cam.x + (x - view.cssW / 2) / cam.scale,
-      y: cam.y + (y - view.cssH / 2) / cam.scale,
+      x: cam.x + k * (x - view.cssW / 2) / cam.scale,
+      y: cam.y + k * (y - view.cssH / 2) / cam.scale,
     };
   }
 
@@ -231,6 +249,7 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.translate(W / 2 + shX, H / 2 + shY);
     ctx.scale(sc, sc);
+    if (flip) ctx.rotate(Math.PI);
     ctx.translate(-cam.x, -cam.y);
 
     drawTurf(ctx);
@@ -240,8 +259,8 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
-    if (input && input.mode === 'point') drawTargets(ctx, s, input);
-    drawUnits(ctx, s, fx, input);
+    if (input && input.mode === 'point') drawTargets(ctx, s, input, myUnitsInScreenOrder(s), teamColor);
+    drawUnits(ctx, s, fx, input, myTeam, myUnitsInScreenOrder(s), teamColor);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
 
@@ -259,7 +278,19 @@ export function createRenderer(canvas) {
     }
   }
 
-  return { ctx, view, cam, resize, updateCamera, draw, toWorld };
+  return {
+    ctx, view, cam, resize, updateCamera, draw, toWorld,
+    myUnitsInScreenOrder,
+    teamColor,
+    get flip() { return flip; },
+    /** 対人戦で自分が team 1 になったときに呼ぶ */
+    setViewpoint(team) {
+      myTeam = team | 0;
+      flip = myTeam === 1;
+      cam.biasTarget = -1;
+      cam.bias = -1;
+    },
+  };
 }
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -355,11 +386,11 @@ function drawGoals(ctx, s) {
 
 // ---------------------------------------------------------------- entities
 
-function drawUnits(ctx, s, fx, input) {
+function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
   const r = CONFIG.unit.radius;
 
   for (const u of s.units) {
-    const color = COLORS.team[u.team];
+    const color = colorOf(u.team);
 
     // 盤面から数ミリ浮かせるだけのソフトシャドウ
     ctx.save();
@@ -380,9 +411,9 @@ function drawUnits(ctx, s, fx, input) {
     ctx.stroke();
 
     // 担当ピップ（左=1点 / 右=2点）。どちらの親指の駒かを一瞬で。
-    if (u.team === TEAM_PLAYER) {
+    if (u.team === mine) {
       ctx.fillStyle = 'rgba(255,255,255,0.62)';
-      const n = u.side + 1;
+      const n = (screenOrder.indexOf(u) >= 0 ? screenOrder.indexOf(u) : u.side) + 1;
       for (let i = 0; i < n; i++) {
         const ox = (i - (n - 1) / 2) * r * 0.42;
         ctx.beginPath();
@@ -404,8 +435,8 @@ function drawUnits(ctx, s, fx, input) {
     }
 
     // 操作中のリング
-    if (u.team === TEAM_PLAYER && input) {
-      const st = input.pointers[u.side];
+    if (u.team === mine && input) {
+      const st = input.pointers[screenOrder.indexOf(u)];
       if (st) {
         ctx.strokeStyle = `rgba(255,255,255,${0.28 * st.alpha})`;
         ctx.lineWidth = 1.5 * S;
@@ -534,14 +565,14 @@ function drawRipples(ctx, fx) {
 // ---------------------------------------------------------------- 操作の表示
 
 /** point 操作の目的地マーカー。ワールド空間なのでコート上の同じ場所を指し続ける。 */
-function drawTargets(ctx, s, input) {
+function drawTargets(ctx, s, input, screenOrder, colorOf) {
   const r = CONFIG.unit.radius;
   for (let side = 0; side < 2; side++) {
     const pt = input.pointers[side];
     if (!pt) continue;
     const a = Math.max(0, pt.alpha);
-    const u = s.units[side];
-    const color = COLORS.team[u.team];
+    const u = screenOrder[side];
+    const color = colorOf(u.team);
 
     // 駒から目的地への細い導線
     ctx.strokeStyle = `rgba(255,255,255,${0.18 * a})`;

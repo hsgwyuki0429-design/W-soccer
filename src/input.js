@@ -6,8 +6,9 @@
 //   stick : 置いた地点を支点にした相対操作。進行方向は「置いた地点 → 今の指」。
 //   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かう。
 //
-// アクションはどちらも「指を払って離した」ときだけ。ただ離しただけでは出ない。
-// 向きは、最後に指を走らせた区間（加速した地点 → 離した地点）の角度。
+// アクションはどちらも「離す直前に指が動いていれば」出る。速さは問わない。
+// 出ないのは、指を止めてから離したときだけ。
+// 向きは離す直前の移動から取る。
 //
 // 座標の扱いが2つの操作で違う：
 //   stick のジョイスティックは画面座標(CSS px)。カメラが動いても指の下から動かない。
@@ -79,36 +80,36 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
     } else {
       h.push({ x, y, t: now, rest: 0 });
     }
-    // 遡るのは flickMaxMs までなので、その倍も持てば十分
-    const cutoff = now - S.flickMaxMs * 2;
+    // 遡るのは dirWindowMs までなので、その倍も持てば十分
+    const cutoff = now - S.dirWindowMs * 2;
     while (h.length > 2 && h[0].t < cutoff) h.shift();
   }
 
   /**
-   * 「最後に指を走らせた区間」の起点を探す。
-   * 終端から遡って、指の速さが flickSpeed を下回った所で止める。
-   * ゆっくり操舵してから最後にパッと払うと、その払った区間だけが残る。
+   * 離す直前の移動から向きを取る。速さは見ない。
+   * 指を止めてから離した場合だけ null（＝発火しない）。
+   *
+   * 向きは終端から遡って dirDist ぶんの移動が貯まった所まで見る。
+   * 1区間だけだと数pxのぶれで向きが暴れるので、少し遡って均す。
    */
   function findFlick(pt) {
     const h = pt.history;
     if (h.length < 2) return null;
     const last = h[h.length - 1];
-    // 払ったあと指を止めてから離したなら、それは払っていない扱い
-    if ((last.rest || 0) > S.flickRestMs) return null;
-    let i = h.length - 1;
-    while (i > 0) {
-      const a = h[i - 1], b = h[i];
-      if (last.t - a.t > S.flickMaxMs) break;
-      const dt = b.t - a.t;
-      if (dt <= 0) { i--; continue; }
-      const speed = Math.hypot(b.x - a.x, b.y - a.y) / dt;
-      if (speed < S.flickSpeed) break;
-      i--;
+
+    // 離す直前に止まっていたなら発火しない。ここだけが「撃たない」条件。
+    if ((last.rest || 0) > S.restMs) return null;
+
+    let dx = 0, dy = 0;
+    for (let i = h.length - 2; i >= 0; i--) {
+      const a = h[i];
+      if (last.t - a.t > S.dirWindowMs) break;
+      dx = last.x - a.x;
+      dy = last.y - a.y;
+      if (Math.hypot(dx, dy) >= S.dirDist) break;
     }
-    const origin = h[i];
-    const dx = last.x - origin.x, dy = last.y - origin.y;
     const d = Math.hypot(dx, dy);
-    if (d < S.flickDist) return null;      // 払っていない
+    if (d < S.minDist) return null;        // 窓の中でまったく動いていない
     return { x: dx / d, y: dy / d };
   }
 

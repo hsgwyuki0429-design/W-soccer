@@ -1,28 +1,19 @@
 # Render Blueprint。
-# ビルド不要の静的サイトとして配信する（無料プランで動く）。
-# Web Service として動かしたい場合は下の runtime: node のブロックに差し替える。
+# 対人戦に WebSocket サーバーが要るので Web Service で動かす。
+# server.js は静的配信も兼ねているので、これ1つでゲーム本体も配信される。
 services:
   - type: web
     name: pair-kick
-    runtime: static
+    runtime: node
+    plan: free
     buildCommand: ""
-    staticPublishPath: .
+    startCommand: node server.js
+    healthCheckPath: /health
     pullRequestPreviewsEnabled: false
-    headers:
-      # ES Modules を配信するので .js の MIME は Render 側の既定に任せる。
-      # ゲーム本体はビルドしないため、HTML だけは常に取り直させる。
-      - path: /index.html
-        name: Cache-Control
-        value: no-cache
-    routes:
-      - type: rewrite
-        source: /
-        destination: /index.html
 
-# Web Service で動かす場合（server.js が PORT を読む）:
+# 対人戦が要らないなら、静的サイトとしても配信できる（その場合 /ws は無い）:
 #   - type: web
 #     name: pair-kick
-#     runtime: node
-#     plan: free
+#     runtime: static
 #     buildCommand: ""
-#     startCommand: node server.js
+#     staticPublishPath: .

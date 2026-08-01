@@ -4,11 +4,10 @@
 // 操作方法は2つ。どちらも「指を離した瞬間にアクションが出る」点は同じ。
 //
 //   stick : 置いた地点を支点にした相対操作。進行方向は「置いた地点 → 今の指」。
-//           アクションの向きは、最後に指を走らせた向き（加速した地点 → 離した地点）。
-//           払っていなければ「置いた地点 → 離した地点」に落ちる。
 //   point : 進んでほしい場所に指を置く絶対操作。駒はそこへ向かう。
-//           離すときに指を払っていればその向き、払っていなければ
-//           「駒 → 指の場所」の角度へ撃つ。
+//
+// アクションはどちらも「指を払って離した」ときだけ。ただ離しただけでは出ない。
+// 向きは、最後に指を走らせた区間（加速した地点 → 離した地点）の角度。
 //
 // 座標の扱いが2つの操作で違う：
 //   stick のジョイスティックは画面座標(CSS px)。カメラが動いても指の下から動かない。
@@ -112,24 +111,11 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
   }
 
   /**
-   * 離した瞬間のアクション。
-   * stick は、最後に指を走らせた向きがあればそれを使う。
-   * 払っていなければ「置いた地点 → 離した地点」（倒し量がしきい値未満なら撃たない）。
-   * point は駒の位置が要るので、向きの確定は fill() まで遅らせる。
+   * 離した瞬間のアクション。払っていなければ null（何も起きない）。
+   * 操作方法によらず、判定も向きも「最後に指を走らせた区間」だけで決まる。
    */
   function resolveRelease(pt) {
-    // 「最後に指を走らせた向き」は両モード共通。払えばその向きへ撃つ。
-    const flicked = findFlick(pt);
-    if (flicked) return flicked;
-
-    // 払っていないときの落とし所だけがモードで違う
-    if (mode === 'point') return { point: true, wx: pt.wx, wy: pt.wy };
-
-    const dx = pt.curX - pt.baseX;
-    const dy = pt.curY - pt.baseY;
-    const d = Math.hypot(dx, dy);
-    if (d < S.maxRadius * S.releaseTilt) return null;
-    return { x: dx / d, y: dy / d };
+    return findFlick(pt);
   }
 
   function onDown(e) {
@@ -258,20 +244,7 @@ export function createInput(canvas, { toWorld, onFeedback = () => {} }) {
         }
 
         // 離した瞬間に確定したアクションを1回だけ渡す
-        const rel = released[side];
-        if (rel) {
-          released[side] = null;
-          if (rel.point) {
-            // point は駒からの向き。駒がもう着いているなら撃たない
-            if (u) {
-              const dx = rel.wx - u.x, dy = rel.wy - u.y;
-              const d = Math.hypot(dx, dy);
-              if (d >= C.pointFire) flick = { x: dx / d, y: dy / d };
-            }
-          } else {
-            flick = rel;
-          }
-        }
+        if (released[side]) { flick = released[side]; released[side] = null; }
 
         const km = keyboardMove(side);
         if (km) move = km;

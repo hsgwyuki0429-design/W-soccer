@@ -137,7 +137,7 @@ export function updateEffects(fx, dt) {
 
   // シェイク（trauma^2 で立ち上がりを鋭く）
   fx.trauma = Math.max(0, fx.trauma - dt * 1.9);
-  const mag = fx.trauma * fx.trauma * 16 * S;
+  const mag = fx.trauma * fx.trauma * 16;   // 設計単位。画面空間への変換は render 側
   fx.shakeX = (Math.random() * 2 - 1) * mag;
   fx.shakeY = (Math.random() * 2 - 1) * mag;
 

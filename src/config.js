@@ -58,13 +58,13 @@ export const CONFIG = {
     duration: 0.15,
   },
 
-  // スティックは指のインターフェースなので、画面上の物理サイズを保つために
-  // WORLD ぶんだけ論理値を大きくする（画面倍率が 1/WORLD になるため）。
+  // スティックは指のインターフェースなので、単位は CSS px。
+  // カメラが寄ろうが引こうが、指に対する大きさは変わらない。
   stick: {
-    maxRadius: w(60),
-    knobRadius: w(25),
+    maxRadius: 60,         // CSS px
+    knobRadius: 25,        // CSS px
     releaseWindowMs: 110,  // 指を離す直前のこの時間だけを見る
-    releaseDist: w(26),    // その間にこれだけ動いていればアクション
+    releaseDist: 26,       // CSS px。この距離だけ動いていればアクション
   },
 
   heat: {

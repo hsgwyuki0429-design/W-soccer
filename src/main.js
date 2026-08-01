@@ -24,9 +24,11 @@ const state = createState();
 const bot = createBot();
 const intents = [null, null, null, null];
 
-const input = createInput(canvas, renderer.toLogical, (kind) => {
+const input = createInput(canvas, (kind) => {
   if (kind === 'stick') audio.click();
 });
+
+let snapCamera = true;   // キックオフ・リセット時はカメラを補間せずに飛ばす
 
 let running = false;
 let acc = 0;
@@ -51,6 +53,7 @@ function onPrimary() {
   }
   ui.hideOverlay();
   input.reset();
+  snapCamera = true;
   running = true;
   ui.banner('READY', '', CONFIG.match.readySeconds * 1000 - 120);
 }
@@ -58,6 +61,7 @@ function onPrimary() {
 function resize() {
   const v = renderer.resize();
   ui.setUnit(v.uiScale, v.netTop);
+  snapCamera = true;   // 画面の向きが変わるのは不連続。補間せず合わせ直す
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
@@ -180,6 +184,8 @@ function frame(now) {
   }
 
   FX.updateEffects(fx, dt);
+  renderer.updateCamera(state, dt, snapCamera);
+  snapCamera = false;
   audio.setHeat(heatRatio(state));
   ui.setScore(state.score[0], state.score[1]);
   ui.setMatchPoint(isMatchPoint(state) && state.phase !== PHASE.OVER);
@@ -207,10 +213,11 @@ function tick(dt) {
 
   if (!wasReady && state.phase === PHASE.READY) {
     ui.banner('READY', '', CONFIG.match.readySeconds * 1000 - 150);
+    snapCamera = true;                 // 配置が飛ぶのでカメラも飛ばす
   }
 }
 
 requestAnimationFrame(frame);
 
 // デバッグ用（コンソールから触れるように）
-window.PAIRKICK = { state, fx, CONFIG, audio };
+window.PAIRKICK = { state, fx, CONFIG, audio, cam: renderer.cam, view: renderer.view };

@@ -41,7 +41,22 @@ export function heatColor(ratio) {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d', { alpha: false });
-  const view = { scale: 1, offX: 0, offY: 0, cssW: 0, cssH: 0 };
+  const view = { cssW: 0, cssH: 0, dpr: 1, uiScale: 1, netTop: 0, wholeField: true };
+
+  // 追従カメラ。ワールドのどこを画面に写すかを持つ。
+  // 縦画面ではコート全体が入る倍率で固定され、従来と同じ絵になる。
+  // 横画面はコートが画面に収まらないので、注視点（ボールと自分の2駒）を
+  // 追いかけながら、その広がりに応じてズームする。
+  const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1 };
+
+  function limits() {
+    // 全体が入る倍率（下限）と、寄れる上限。
+    // 上限は「コート幅が画面幅を埋める」か「コート縦の46%が見える」の小さいほう。
+    // これ以上寄るとパスの受け手が画面外になり、パスが武器でなくなる。
+    const fitAll = Math.min(view.cssW / VIEW.w, view.cssH / VIEW.h);
+    const maxIn = Math.min(view.cssW / VIEW.w, view.cssH / (CONFIG.field.h * 0.46));
+    return { min: fitAll, max: Math.max(fitAll, maxIn) };
+  }
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
@@ -49,31 +64,79 @@ export function createRenderer(canvas) {
     const h = canvas.clientHeight || window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
-    const scale = Math.min(w / VIEW.w, h / VIEW.h);
-    view.scale = scale * dpr;
-    view.offX = (w - VIEW.w * scale) * 0.5 * dpr + VIEW.padX * view.scale;
-    view.offY = (h - VIEW.h * scale) * 0.5 * dpr + VIEW.padTop * view.scale;
     view.cssW = w;
     view.cssH = h;
-    view.cssScale = scale;
-    // DOM の UI は世界の縮尺に引きずられないよう、設計値(450x800)基準の倍率を渡す
-    view.uiScale = scale * S;
-    // フィールド上端（CSS px）と、その上のゴールネット上端。HUD帯の高さに使う。
-    view.fieldTop = (h - VIEW.h * scale) * 0.5 + VIEW.padTop * scale;
-    view.netTop = view.fieldTop - CONFIG.field.goalDepth * scale;
+    view.dpr = dpr;
+
+    const lim = limits();
+    view.wholeField = lim.max <= lim.min + 1e-6;
+
+    // DOM の UI はカメラの倍率に引きずられてはいけない（横持ちで潰れる）。
+    // 画面の短辺だけで決めるので、向きが変わってもUIの物理サイズは一定。
+    view.uiScale = Math.min(w, h) / (VIEW.w / S);
+
+    if (view.wholeField) {
+      // 従来どおり：コート上端の上にスコアの帯を確保する
+      const fieldTop = (h - VIEW.h * lim.min) * 0.5 + VIEW.padTop * lim.min;
+      view.netTop = fieldTop - CONFIG.field.goalDepth * lim.min;
+    } else {
+      view.netTop = view.uiScale * 56;   // 全体表示ではないので、上端に帯だけ確保する
+    }
     return view;
   }
 
-  /** クライアント座標 → 論理フィールド座標 */
-  function toLogical(clientX, clientY) {
-    const r = canvas.getBoundingClientRect();
-    const s = view.cssScale || 1;
-    const ox = (r.width - VIEW.w * s) * 0.5 + VIEW.padX * s;
-    const oy = (r.height - VIEW.h * s) * 0.5 + VIEW.padTop * s;
+  /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ） */
+  function focus(s) {
+    const pts = [s.ball, s.units[0], s.units[1]];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const m = 90 * S;   // 周囲の余白。詰めすぎると常時ズームで酔う
     return {
-      x: (clientX - r.left - ox) / s,
-      y: (clientY - r.top - oy) / s,
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      w: (maxX - minX) + m * 2,
+      h: (maxY - minY) + m * 2,
     };
+  }
+
+  function clampCenter(scale) {
+    const hw = view.cssW / (2 * scale);
+    const hh = view.cssH / (2 * scale);
+    const gd = CONFIG.field.goalDepth;
+    const x0 = -VIEW.padX, x1 = CONFIG.field.w + VIEW.padX;
+    const y0 = -gd - VIEW.padX, y1 = CONFIG.field.h + gd + VIEW.padX;
+
+    cam.x = (x1 - x0) <= hw * 2 ? (x0 + x1) / 2 : clamp(cam.x, x0 + hw, x1 - hw);
+    cam.y = (y1 - y0) <= hh * 2 ? (y0 + y1) / 2 : clamp(cam.y, y0 + hh, y1 - hh);
+  }
+
+  /** @param {boolean} snap キックオフやリセットでは補間せず飛ばす */
+  function updateCamera(s, dt, snap = false) {
+    const lim = limits();
+    const f = focus(s);
+    const want = clamp(
+      Math.min(view.cssW / f.w, view.cssH / f.h),
+      lim.min, lim.max
+    );
+
+    if (snap) {
+      cam.scale = want;
+      cam.x = f.x;
+      cam.y = f.y;
+    } else {
+      // 指数補間。位置よりズームをゆっくりにして、寄り引きの揺れを抑える
+      const kp = 1 - Math.exp(-dt / 0.16);
+      const kz = 1 - Math.exp(-dt / 0.34);
+      cam.x += (f.x - cam.x) * kp;
+      cam.y += (f.y - cam.y) * kp;
+      cam.scale += (want - cam.scale) * kz;
+    }
+    clampCenter(cam.scale);
   }
 
   function draw(s, fx, input) {
@@ -82,9 +145,15 @@ export function createRenderer(canvas) {
     ctx.fillStyle = '#0b1712';
     ctx.fillRect(0, 0, W, H);
 
+    const sc = cam.scale * view.dpr;
+    // シェイクは画面空間。カメラ倍率で揺れ幅が変わらないようにする。
+    const shX = fx.shakeX * view.uiScale * view.dpr;
+    const shY = fx.shakeY * view.uiScale * view.dpr;
+
     ctx.save();
-    ctx.translate(view.offX + fx.shakeX * view.scale, view.offY + fx.shakeY * view.scale);
-    ctx.scale(view.scale, view.scale);
+    ctx.translate(W / 2 + shX, H / 2 + shY);
+    ctx.scale(sc, sc);
+    ctx.translate(-cam.x, -cam.y);
 
     drawTurf(ctx);
     drawGoals(ctx, s);
@@ -99,6 +168,7 @@ export function createRenderer(canvas) {
 
     ctx.restore();
 
+    // ジョイスティックは画面空間の要素。カメラと一緒に動いてはいけない。
     if (input) drawSticks(ctx, view, input);
 
     if (fx.flash.a > 0.001) {
@@ -110,8 +180,10 @@ export function createRenderer(canvas) {
     }
   }
 
-  return { ctx, view, resize, toLogical, draw };
+  return { ctx, view, cam, resize, updateCamera, draw };
 }
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 // ---------------------------------------------------------------- field
 
@@ -383,16 +455,15 @@ function drawRipples(ctx, fx) {
 // ---------------------------------------------------------------- joystick
 
 export function drawSticks(ctx, view, input) {
+  const d = view.dpr;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.translate(view.offX, view.offY);
-  ctx.scale(view.scale, view.scale);
+  ctx.setTransform(d, 0, 0, d, 0, 0);   // 以降は CSS px で描く
 
   for (const st of input.sticks) {
     if (!st) continue;
     const a = Math.max(0, st.alpha);
     const grow = Math.min(1, (performance.now() - st.born) / 130);
-    const scale = (st.dying ? 0.94 + 0.06 * a : 0.96 + 0.04 * grow);
+    const scale = st.dying ? 0.94 + 0.06 * a : 0.96 + 0.04 * grow;
 
     ctx.save();
     ctx.translate(st.baseX, st.baseY);
@@ -404,17 +475,16 @@ export function drawSticks(ctx, view, input) {
     ctx.arc(0, 0, CONFIG.stick.maxRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.24 * a})`;
-    ctx.lineWidth = 1 * S;
+    ctx.lineWidth = 1;
     ctx.stroke();
 
     // ノブ
-    const kx = st.knobX - st.baseX, ky = st.knobY - st.baseY;
     ctx.fillStyle = `rgba(255,255,255,${0.16 * a})`;
     ctx.beginPath();
-    ctx.arc(kx, ky, CONFIG.stick.knobRadius, 0, Math.PI * 2);
+    ctx.arc(st.knobX - st.baseX, st.knobY - st.baseY, CONFIG.stick.knobRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.5 * a})`;
-    ctx.lineWidth = 1.2 * S;
+    ctx.lineWidth = 1.2;
     ctx.stroke();
 
     ctx.restore();

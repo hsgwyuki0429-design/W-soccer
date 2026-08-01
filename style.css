@@ -256,6 +256,22 @@ html, body {
 }
 .pill:active { transform: scale(0.97); opacity: 0.9; }
 
+/* ---------------------------------------------------------- 横持ち */
+
+/* 画面が低いときはカードが縦にはみ出すので詰める */
+@media (max-height: 460px) {
+  #overlay-card {
+    width: calc(var(--u) * 400);
+    padding: calc(var(--u) * 18) calc(var(--u) * 24) calc(var(--u) * 16);
+  }
+  #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
+  #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
+  #ov-hints { margin: calc(var(--u) * 12) 0 calc(var(--u) * 12); }
+  .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }
+  .pill { margin-top: calc(var(--u) * 12); padding: calc(var(--u) * 11) calc(var(--u) * 20); }
+  #banner { top: 34%; }
+}
+
 /* ---------------------------------------------------------- reduced motion */
 
 @media (prefers-reduced-motion: reduce) {

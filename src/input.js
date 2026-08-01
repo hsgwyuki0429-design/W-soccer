@@ -10,11 +10,15 @@ import { CONFIG } from './config.js';
 const S = CONFIG.stick;
 
 /**
+ * 座標はすべて canvas 基準の CSS px で扱う。ワールド座標は一切見ない。
+ * （カメラが動くゲームでジョイスティックをワールドに置くと、指を止めていても
+ *   スティックが画面上を流れていってしまう。半画面の割り当ても同じ理由で画面基準。）
+ * move / flick は正規化ベクトルなので、カメラが回転しない限りワールドでもそのまま使える。
+ *
  * @param {HTMLCanvasElement} canvas
- * @param {(clientX:number, clientY:number) => {x:number,y:number}} toLogical
  * @param {(name:string) => void} onFeedback  スティック出現などの通知
  */
-export function createInput(canvas, toLogical, onFeedback = () => {}) {
+export function createInput(canvas, onFeedback = () => {}) {
   // side 0 = 左半画面 → 駒0 / side 1 = 右半画面 → 駒1（担当は固定）
   const sticks = [null, null];
   const released = [null, null];   // 離した瞬間に確定したアクション（fill が回収する）
@@ -22,8 +26,15 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
   const keyAction = [null, null];
   let anyPointer = false;
 
-  function sideOf(logicalX) {
-    return logicalX < CONFIG.field.w / 2 ? 0 : 1;
+  /** クライアント座標 → canvas 基準の CSS px */
+  function local(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width };
+  }
+
+  // 担当は「画面の左半分 / 右半分」で決まる。コート上の左右ではない。
+  function sideOf(localX, width) {
+    return localX < width / 2 ? 0 : 1;
   }
 
   function makeStick(id, p, now) {
@@ -62,8 +73,8 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
   }
 
   function onDown(e) {
-    const p = toLogical(e.clientX, e.clientY);
-    const side = sideOf(p.x);
+    const p = local(e);
+    const side = sideOf(p.x, p.w);
     if (sticks[side] && sticks[side].dying === 0) return; // 同じ半画面の2本目は無視
     sticks[side] = makeStick(e.pointerId, p, performance.now());
     anyPointer = true;
@@ -78,7 +89,7 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
     const now = performance.now();
     for (const st of sticks) {
       if (!st || st.id !== e.pointerId || st.dying) continue;
-      const p = toLogical(e.clientX, e.clientY);
+      const p = local(e);
       record(st, p.x, p.y, now);
     }
     e.preventDefault();
@@ -90,7 +101,7 @@ export function createInput(canvas, toLogical, onFeedback = () => {}) {
       const st = sticks[i];
       if (!st || st.id !== e.pointerId || st.dying) continue;
       // 離した位置も履歴に入れてから判定する（up の座標が move と違う環境がある）
-      const p = toLogical(e.clientX, e.clientY);
+      const p = local(e);
       record(st, p.x, p.y, now);
       released[i] = resolveRelease(st, now);
       st.dying = 1;

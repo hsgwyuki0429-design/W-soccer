@@ -12,11 +12,25 @@
 ES Modules を使うため、`file://` ではなくローカルサーバーが必要です。
 
 ```sh
-python3 -m http.server 8080     # または  npm start
+npm start                       # node server.js（依存ゼロ）
 # → http://localhost:8080
 ```
 
-ビルドは不要です。
+`python3 -m http.server 8080` でも動きます。ビルドは不要です。
+
+## 公開
+
+ビルド成果物がないので、リポジトリの中身をそのまま配信すれば動きます。
+
+**GitHub Pages** — `main` への push で `.github/workflows/pages.yml` が配信します。
+初回だけ **Settings → Pages → Source** を「GitHub Actions」に切り替えてください。
+公開URLは `https://<user>.github.io/W-soccer/` です（サブパス配信でも動くよう、
+アセット参照はすべて相対パスにしてあります）。
+
+**Render** — リポジトリを指定すれば `render.yaml` を読んで静的サイトとして配信します。
+Web Service として動かしたい場合は `render.yaml` 末尾のコメントの設定に差し替えてください。
+`server.js` が `PORT` を読み、`.js` に `text/javascript` を付けて配信します
+（MIMEが違うとESモジュールはブラウザに拒否されます）。
 
 ## 操作
 
@@ -43,6 +57,9 @@ python3 -m http.server 8080     # または  npm start
 ```
 index.html
 style.css          UI（HUD・メニュー・バナー）の質感
+server.js          依存ゼロの静的サーバー（ローカル / Render Web Service 共用）
+render.yaml        Render Blueprint
+.github/workflows/pages.yml   GitHub Pages への配信
 src/
   main.js          ループ、状態遷移、各モジュールの結線
   config.js        全チューニング値

@@ -47,7 +47,8 @@ export function createRenderer(canvas) {
   // 縦画面ではコート全体が入る倍率で固定され、従来と同じ絵になる。
   // 横画面はコートが画面に収まらないので、注視点（ボールと自分の2駒）を
   // 追いかけながら、その広がりに応じてズームする。
-  const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1 };
+  // bias = 視点を進行方向のどちら側へずらすか。-1 で駒が画面下、+1 で画面上。
+  const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1, bias: -1, biasTarget: -1 };
 
   const CAM = CONFIG.camera;
 
@@ -136,9 +137,18 @@ export function createRenderer(canvas) {
     if (mode === 'point') {
       // コートで画面を埋める固定倍率。寄り引きしない。
       want = fillScale();
-      // 駒が画面の下寄りに来るよう、攻める方向（上）へ視点をずらす。
+
       // 「指を置いた先へ進む」操作なので、進む先が広く見えていないと置けない。
-      ty = f.y - CAM.pointBias * (view.cssH / want);
+      // 上へ向かっているなら駒を画面の下へ、下へ向かっているなら画面の上へ。
+      // 自駒2つの平均の縦速度で決め、一定以上動いたときだけ向きを切り替える
+      // （止まった瞬間に視点が跳ね返らないよう、しきい値未満では前の向きを保つ）。
+      const vy = (s.units[0].vy + s.units[1].vy) / 2;
+      if (Math.abs(vy) > CONFIG.unit.maxSpeed * CAM.biasFlipSpeed) {
+        cam.biasTarget = vy < 0 ? -1 : 1;
+      }
+      const kb = snap ? 1 : 1 - Math.exp(-dt / 0.55);
+      cam.bias += (cam.biasTarget - cam.bias) * kb;
+      ty = f.y + CAM.pointBias * (view.cssH / want) * cam.bias;
     } else {
       const lim = limits();
       want = clamp(Math.min(view.cssW / f.w, view.cssH / f.h), lim.min, lim.max);
@@ -191,15 +201,13 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
-    if (input && input.mode === 'point') drawTargets(ctx, s, input);
     drawUnits(ctx, s, fx, input);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
 
     ctx.restore();
 
-    // ジョイスティックは画面空間の要素。カメラと一緒に動いてはいけない。
-    if (input && input.mode === 'stick') drawSticks(ctx, view, input);
+    // 操作系（ジョイスティック / 目的地マーカー）は描かない。盤面だけを見せる。
 
     if (fx.flash.a > 0.001) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -480,82 +488,4 @@ function drawRipples(ctx, fx) {
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
-}
-
-/** point 操作の目的地マーカー。ワールド空間なのでコート上の同じ場所を指し続ける。 */
-function drawTargets(ctx, s, input) {
-  const r = CONFIG.unit.radius;
-  for (let side = 0; side < 2; side++) {
-    const pt = input.pointers[side];
-    if (!pt) continue;
-    const a = Math.max(0, pt.alpha);
-    const u = s.units[side];
-    const color = COLORS.team[u.team];
-
-    // 駒から目的地への細い導線
-    ctx.strokeStyle = `rgba(255,255,255,${0.18 * a})`;
-    ctx.lineWidth = 1.5 * S;
-    ctx.setLineDash([6 * S, 7 * S]);
-    ctx.beginPath();
-    ctx.moveTo(u.x, u.y);
-    ctx.lineTo(pt.wx, pt.wy);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // 目的地のリング
-    const grow = Math.min(1, (performance.now() - pt.born) / 130);
-    const rad = r * (pt.dying ? 0.9 : 0.8 + 0.2 * grow);
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.85 * a;
-    ctx.lineWidth = 2.4 * S;
-    ctx.beginPath();
-    ctx.arc(pt.wx, pt.wy, rad, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.globalAlpha = 0.35 * a;
-    ctx.beginPath();
-    ctx.arc(pt.wx, pt.wy, rad * 0.28, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-}
-
-// ---------------------------------------------------------------- joystick
-
-export function drawSticks(ctx, view, input) {
-  const d = view.dpr;
-  ctx.save();
-  ctx.setTransform(d, 0, 0, d, 0, 0);   // 以降は CSS px で描く
-
-  for (const st of input.pointers) {
-    if (!st) continue;
-    const a = Math.max(0, st.alpha);
-    const grow = Math.min(1, (performance.now() - st.born) / 130);
-    const scale = st.dying ? 0.94 + 0.06 * a : 0.96 + 0.04 * grow;
-
-    ctx.save();
-    ctx.translate(st.baseX, st.baseY);
-    ctx.scale(scale, scale);
-
-    // ベース
-    ctx.fillStyle = `rgba(255,255,255,${0.05 * a})`;
-    ctx.beginPath();
-    ctx.arc(0, 0, CONFIG.stick.maxRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${0.24 * a})`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // ノブ
-    ctx.fillStyle = `rgba(255,255,255,${0.16 * a})`;
-    ctx.beginPath();
-    ctx.arc(st.knobX - st.baseX, st.knobY - st.baseY, CONFIG.stick.knobRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${0.5 * a})`;
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    ctx.restore();
-  }
-  ctx.restore();
 }

@@ -1,6 +1,12 @@
 // bot.js — AI。
 // プレイヤーと完全に同じインターフェース（move + flick）だけを使う。
 // ボールに直接速度を代入するようなズルは一切しない。
+//
+// キックは「駒の中心 → ボール」の向きへ飛ぶ（入力では向きを決められない）。
+// つまりボットも人間と同じで、狙いは体の置き方でしかつけられない。
+// だから思考は2段になる：
+//   1. どこへ蹴りたいか（want）を決める
+//   2. その向きの「裏」へ回り込み、向きが揃ってから蹴る
 
 import { CONFIG, TEAM_BOT } from './config.js';
 import { PHASE, goalMouth } from './game.js';
@@ -65,11 +71,50 @@ export function updateBot(bot, s, intents, dt) {
     const n = norm(dx, dy);
     intents[u.index] = {
       move: { x: n.x * gain, y: n.y * gain },
-      flick: plan.flick,
+      flick: fire(plan, s, u, dt),
     };
-    if (plan.flick && plan.flick.reason) bot.stats[plan.flick.reason]++;
-    plan.flick = null; // フリックは1フレームだけ
+    if (intents[u.index].flick) bot.stats[intents[u.index].flick.reason]++;
   }
+}
+
+/**
+ * 蹴る / 踏み込む瞬間の判定。think ではなく毎フレーム見る。
+ * 向きが揃うのは一瞬なので、思考の間隔（rethinkMs）で待っていると撃ち逃す。
+ */
+function fire(plan, s, u, dt) {
+  const ball = s.ball;
+  const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
+  const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
+
+  if (u.cooldown > 0) { plan.aimT = 0; return null; }
+
+  if (dist <= reach) {
+    const opts = plan.options;
+    if (!opts || !opts.length) { plan.aimT = 0; return null; }
+    // 実際に飛ぶ向き（駒の中心 → ボール）に、既に乗っている選択肢があれば撃つ。
+    // 一番いい狙いに揃うのを待つのではなく、体が向いている先で使えるものを取る。
+    // 揃うまで待つほど妥協幅は広がるが、後ろ向きの選択肢はそもそも入っていない。
+    plan.aimT = (plan.aimT || 0) + dt;
+    const now = norm(ball.x - u.x, ball.y - u.y);
+    for (const o of opts) {
+      // 許容角は狙いごとに違う。ゴール口は広いが、相方は点なので狭い。
+      // 一律にすると、遠いパスが的から大きく外れる（40度ずれ = 200先で137のずれ）。
+      // 待つほど緩めるが、緩めきっても的の倍までにする。
+      const limit = Math.min(o.tol + plan.aimT * B.aimSlackGrow, o.tol * B.aimSlackStretch, B.aimSlackMax);
+      if (now.x * o.x + now.y * o.y >= Math.cos(limit)) {
+        plan.aimT = 0;
+        return { x: o.x, y: o.y, reason: o.reason };
+      }
+    }
+    return null;
+  }
+
+  plan.aimT = 0;
+  // 踏み込みは積んだ思考の次のフレームで使い切る。持ち越すと、条件が揃った
+  // 瞬間に必ず踏み込むことになって、踏み込みばかりの試合になる。
+  const t = plan.tackle;
+  plan.tackle = null;
+  return t;
 }
 
 // ---------------------------------------------------------------- 思考
@@ -97,36 +142,74 @@ function planChaser(bot, s, u, mate, attackY, mouth) {
   const ball = s.ball;
   const plan = getPlan(bot, u);
 
+  // 先に「どこへ蹴りたいか」を決める。回り込む先がこれで決まる。
+  plan.options = kickOptions(s, u, mate, attackY, mouth);
+  plan.want = plan.options[0] || null;
+
   // ボールの予測位置へリード
   const lead = predictBall(ball, u, CONFIG.unit.maxSpeed * B.speedMultiplier);
-  // ゴール方向の「裏」に回り込む
-  const toGoal = norm(mouth.left + F.goalWidth / 2 - lead.x, attackY - lead.y);
-  const back = CONFIG.unit.radius + CONFIG.ball.radius - 6 * S;
-  plan.tx = clamp(lead.x - toGoal.x * back + rnd(18 * S * B.noise / 0.15), 16 * S, F.w - 16 * S);
-  plan.ty = clamp(lead.y - toGoal.y * back + rnd(18 * S * B.noise / 0.15), 16 * S, F.h - 16 * S);
+  // 蹴りたい向きの「裏」へ回り込む。蹴る先が無い（ドリブル）ならゴール方向の裏。
+  const aim = plan.want || norm(mouth.left + F.goalWidth / 2 - lead.x, attackY - lead.y);
+  const spot = standPoint(u, ball, lead, aim);
+  plan.tx = clamp(spot.x + rnd(18 * S * B.noise / 0.15), 16 * S, F.w - 16 * S);
+  plan.ty = clamp(spot.y + rnd(18 * S * B.noise / 0.15), 16 * S, F.h - 16 * S);
 
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
 
-  if (u.cooldown > 0) { plan.flick = null; return; }
-
-  if (dist <= reach) {
-    plan.flick = chooseKick(s, u, mate, attackY, mouth);
-    return;
-  }
-
-  // タックルダッシュ：相手がボールを持っていて、自分がやや遠いとき
+  // タックルダッシュ：相手がボールを持っていて、自分がやや遠いとき。
+  // クールダウン中は積まない。積んでおくと、明けた瞬間に必ず踏み込むことになり、
+  // ボールに追いついたときに蹴るぶんのクールダウンが残らなくなる。
   const foe = nearestFoe(s, u.team, ball.x, ball.y);
-  if (foe && Math.hypot(foe.x - ball.x, foe.y - ball.y) < 46 * S &&
+  if (u.cooldown <= 0 && foe &&
+      Math.hypot(foe.x - ball.x, foe.y - ball.y) < 46 * S &&
       dist < B.tackleRange && dist > reach + 12 * S && Math.random() < 0.45) {
     const d = norm(ball.x - u.x, ball.y - u.y);
-    plan.flick = { x: d.x + rnd(B.noise), y: d.y + rnd(B.noise), reason: 'tackle' };
-    return;
+    plan.tackle = { x: d.x + rnd(B.noise), y: d.y + rnd(B.noise), reason: 'tackle' };
+  } else {
+    plan.tackle = null;
   }
-  plan.flick = null;
 }
 
-function chooseKick(s, u, mate, attackY, mouth) {
+/**
+ * 蹴りたい向き aim の「裏」に立つための目標点。
+ *
+ * まっすぐ裏へ向かうと、既にボールの近くにいる場合はボールを突っ切ってしまい、
+ * 押してしまって狙いが崩れる。近くにいて向きが合っていないときは、
+ * 触れない半径でボールの周りを回る。
+ */
+function standPoint(u, ball, lead, aim) {
+  const back = CONFIG.unit.radius + CONFIG.ball.radius - 6 * S;
+  const far = { x: lead.x - aim.x * back, y: lead.y - aim.y * back };
+
+  const d = Math.hypot(u.x - ball.x, u.y - ball.y);
+  const orbitR = CONFIG.unit.radius + CONFIG.ball.radius + B.orbitPad;
+  if (d > orbitR * B.orbitEnter) return far;   // 遠いなら普通に裏へ向かう
+
+  const wantAng = Math.atan2(-aim.y, -aim.x);                  // ボールから見て立ちたい角度
+  const nowAng = Math.atan2(u.y - ball.y, u.x - ball.x);
+  let diff = ((wantAng - nowAng + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  if (Math.abs(diff) < B.orbitSettle) return far;              // ほぼ合っている
+
+  // 近いほうの回転方向へ、一歩ぶんだけ回った点を目指す
+  const step = nowAng + Math.sign(diff) * Math.min(Math.abs(diff), B.orbitStep);
+  return { x: ball.x + Math.cos(step) * orbitR, y: ball.y + Math.sin(step) * orbitR };
+}
+
+/** 幅 half の的が距離 dist にあるときに許せる角度のずれ */
+function tolFor(half, dist) {
+  return clamp(Math.atan2(half, Math.max(dist, 1)), B.aimSlack, B.aimSlackMax);
+}
+
+/**
+ * 蹴り先の候補を優先順に並べて返す。
+ *
+ * 1つに絞らないのは、飛ぶ向きが体の置き方で決まるから。一番いい狙いに
+ * 揃うまで待つより、既に体が向いている先で使えるものを取るほうが速い。
+ * 後ろ向きの候補は入れない（そのまま自陣へ蹴り込むことになる）。
+ */
+function kickOptions(s, u, mate, attackY, mouth) {
+  const out = [];
   const ball = s.ball;
   const goalX = mouth.left + F.goalWidth / 2 + rnd(F.goalWidth * 0.28);
   const goalDist = Math.hypot(goalX - ball.x, attackY - ball.y);
@@ -135,7 +218,8 @@ function chooseKick(s, u, mate, attackY, mouth) {
   if (goalDist < B.shootRange &&
       (goalDist < B.pointBlank || laneClear(s, ball, { x: goalX, y: attackY }, u.team, u.index))) {
     const d = norm(goalX - ball.x, attackY - ball.y);
-    return { x: d.x + rnd(B.noise * 0.5), y: d.y + rnd(B.noise * 0.5), reason: 'shoot' };
+    out.push({ x: d.x + rnd(B.noise * 0.5), y: d.y + rnd(B.noise * 0.5), reason: 'shoot',
+               tol: tolFor(F.goalWidth * 0.42, goalDist) });
   }
 
   // 2) 相方の位置が良ければ必ずパス
@@ -153,7 +237,8 @@ function chooseKick(s, u, mate, attackY, mouth) {
     if (md > B.passRange[0] && md < B.passRange[1] && forward &&
         laneClear(s, ball, mateLead, u.team, u.index)) {
       const d = norm(mateLead.x - ball.x, mateLead.y - ball.y);
-      return { x: d.x + rnd(B.noise * 0.4), y: d.y + rnd(B.noise * 0.4), reason: 'pass' };
+      out.push({ x: d.x + rnd(B.noise * 0.4), y: d.y + rnd(B.noise * 0.4), reason: 'pass',
+                 tol: tolFor(CONFIG.unit.radius * 3, md) });
     }
   }
 
@@ -165,11 +250,11 @@ function chooseKick(s, u, mate, attackY, mouth) {
       (u.x < F.w / 2 ? -0.5 : 0.5) + rnd(0.3),
       (attackY - u.y) > 0 ? 1 : -1
     );
-    return { x: d.x, y: d.y, reason: 'clear' };
+    out.push({ x: d.x, y: d.y, reason: 'clear', tol: B.aimSlackMax });   // 前へ飛べばいい
   }
 
-  // 4) それ以外はドリブル（= 蹴らずに体で運ぶ。リスクは受け入れる）
-  return null;
+  // 何も無ければドリブル（= 蹴らずに体で運ぶ。リスクは受け入れる）
+  return out;
 }
 
 function planSupport(bot, s, u, chaser, attackY, defendY) {
@@ -194,10 +279,20 @@ function planSupport(bot, s, u, chaser, attackY, defendY) {
   // 支援側もボールが目の前に転がってきたら蹴る
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
-  if (u.cooldown <= 0 && dist <= reach) {
-    plan.flick = chooseKick(s, u, chaser, attackY, goalMouth());
+  plan.tackle = null;
+  if (dist <= reach * 2.2) {
+    // 蹴れる距離の少し手前から狙いを決めておく。転がってきた所を蹴るには、
+    // 触れてから考えていては間に合わない（向きは体の置き方でしか作れない）。
+    plan.options = kickOptions(s, u, chaser, attackY, goalMouth());
+    plan.want = plan.options[0] || null;
+    if (plan.want) {
+      const spot = standPoint(u, ball, ball, plan.want);
+      plan.tx = clamp(spot.x, 16 * S, F.w - 16 * S);
+      plan.ty = clamp(spot.y, 16 * S, F.h - 16 * S);
+    }
   } else {
-    plan.flick = null;
+    plan.options = null;
+    plan.want = null;
   }
 }
 
@@ -205,7 +300,7 @@ function planSupport(bot, s, u, chaser, attackY, defendY) {
 
 function getPlan(bot, u) {
   let p = bot.plans.get(u.index);
-  if (!p) { p = { tx: u.x, ty: u.y, flick: null }; bot.plans.set(u.index, p); }
+  if (!p) { p = { tx: u.x, ty: u.y, want: null, options: null, tackle: null, aimT: 0 }; bot.plans.set(u.index, p); }
   return p;
 }
 

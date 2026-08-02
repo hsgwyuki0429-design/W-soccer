@@ -6,7 +6,10 @@
 //
 // アクションは「離す直前に指が動いていれば」出る。速さは問わない。
 // 出ないのは、指を止めてから離したときだけ。
-// 向きは離す直前の移動から取る。
+//
+// 向きは「払った向き」ではなく「そのときのスティックの向き」。
+// 払う動きは合図であって、狙いではない。狙いは駒をどこへ置いたかで決まる
+// （キックは駒の中心 → ボールの向きへ飛ぶ。game.js を参照）。
 //
 // 座標はすべて画面座標(CSS px)。カメラが動いても指の下から動かない。
 // 担当（左半分＝左の駒）も画面基準。コート上の左右ではない。
@@ -14,6 +17,7 @@
 import { CONFIG } from './config.js';
 
 const S = CONFIG.stick;
+const A = CONFIG.moveArrow;
 
 /**
  * @param {HTMLCanvasElement} canvas
@@ -24,8 +28,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   // side 0 = 左半画面 → 駒0 / side 1 = 右半画面 → 駒1（担当は固定）
   const pointers = [null, null];
   const released = [null, null];   // 離した瞬間に確定したアクション（fill が回収する）
-  // 「今この瞬間に離したら、どっちへ飛ぶか」。矢印の描画用。
-  const aims = [null, null];
+  // 今スティックが倒れている向き（画面座標）。進行方向の矢印を描くのに使う。
+  const dirs = [null, null];
   const keys = new Set();
   const keyAction = [null, null];
   let anyPointer = false;
@@ -50,6 +54,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       born: now,
       alpha: 1,
       dying: 0,
+      lastDir: null,              // 直近の「ちゃんと倒れていた」向き（画面座標）
       // フリックの起点を探すのに使う。t は「動いた時刻」、rest は「そこで止まっている時間」。
       history: [{ x: p.x, y: p.y, t: now, rest: 0 }],
     };
@@ -57,6 +62,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
   function track(pt, x, y, now) {
     pt.curX = x; pt.curY = y;
+    const sd = stickDir(pt);
+    if (sd) pt.lastDir = sd;
 
     const h = pt.history;
     const last = h[h.length - 1];
@@ -75,21 +82,26 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   }
 
   /**
-   * 離す直前の移動から向きを取る。速さは見ない。
-   * 指を止めてから離した場合だけ null（＝発火しない）。
-   *
-   * 向きは終端から遡って dirDist ぶんの移動が貯まった所まで見る。
-   * 1区間だけだと数pxのぶれで向きが暴れるので、少し遡って均す。
-   *
-   * @param {number} rest 終端でその場に留まっている時間(ms)
+   * 今スティックが倒れている向き（画面座標）。
+   * 倒し量が僅かなときは向きが暴れるので null を返す。
    */
-  function flickDir(pt, rest) {
-    const h = pt.history;
-    if (h.length < 2) return null;
-    const last = h[h.length - 1];
+  function stickDir(pt) {
+    const dx = pt.curX - pt.baseX;
+    const dy = pt.curY - pt.baseY;
+    const d = Math.hypot(dx, dy);
+    if (d < S.maxRadius * A.minInput) return null;
+    return { x: dx / d, y: dy / d };
+  }
 
-    // 離す直前に止まっていたなら発火しない。ここだけが「撃たない」条件。
-    if (rest > S.restMs) return null;
+  /**
+   * 離す直前に指が動いていたか。ここだけが「撃つ / 撃たない」を分ける。
+   * 速さは見ない。止めてから離したときだけ撃たない。
+   */
+  function wasSwiping(pt, rest) {
+    const h = pt.history;
+    if (h.length < 2) return false;
+    const last = h[h.length - 1];
+    if (rest > S.restMs) return false;
 
     let dx = 0, dy = 0;
     for (let i = h.length - 2; i >= 0; i--) {
@@ -99,29 +111,18 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       dy = last.y - a.y;
       if (Math.hypot(dx, dy) >= S.dirDist) break;
     }
-    const d = Math.hypot(dx, dy);
-    if (d < S.minDist) return null;        // 窓の中でまったく動いていない
-    return { x: dx / d, y: dy / d };
+    return Math.hypot(dx, dy) >= S.minDist;   // 窓の中でまったく動いていない
   }
 
   /**
    * 離した瞬間のアクション。払っていなければ null（何も起きない）。
-   * 判定も向きも「最後に指を走らせた区間」だけで決まる。
+   * 撃つかどうかは指が動いていたかで、向きはスティックの倒れている向きで決まる。
+   * 払い戻して中央へ帰ってきた場合に備え、直近の倒し向きを控えとして持つ。
    */
   function resolveRelease(pt) {
     const last = pt.history[pt.history.length - 1];
-    return flickDir(pt, last ? (last.rest || 0) : 0);
-  }
-
-  /**
-   * 押さえたままの指について「今この瞬間に離したら」の向き。
-   * 停止時間は履歴ではなく現在時刻から測る。指を止めているあいだ move は
-   * 届かないので、履歴の rest は止めた瞬間の値のまま古びるため。
-   */
-  function liveFlick(pt, now) {
-    const last = pt.history[pt.history.length - 1];
-    if (!last) return null;
-    return flickDir(pt, Math.max(last.rest || 0, now - last.t));
+    if (!wasSwiping(pt, last ? (last.rest || 0) : 0)) return null;
+    return stickDir(pt) || pt.lastDir || { x: 0, y: 0 };
   }
 
   function onDown(e) {
@@ -155,7 +156,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       const p = local(e);
       track(pt, p.x, p.y, performance.now());
       released[i] = fire ? resolveRelease(pt) : null;
-      aims[i] = null;
+      dirs[i] = null;
       pt.dying = 1;
     }
     anyPointer = pointers.some((s) => s && !s.dying);
@@ -197,21 +198,20 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
   return {
     pointers,
-    /** 画面座標での「今離したら飛ぶ向き」。撃てないときは null。 */
-    aims,
+    /** 画面座標での進行方向。入力が無い / 倒し量が僅かなら null。 */
+    dirs,
 
-    // 見た目のフェード処理と、矢印の向きの更新（物理とは独立）
+    // 見た目のフェード処理と、進行方向の更新（物理とは独立）
     update(dt) {
-      const now = performance.now();
       for (let i = 0; i < 2; i++) {
         const pt = pointers[i];
-        if (!pt) { aims[i] = null; continue; }
+        if (!pt) { dirs[i] = keyboardMove(i); continue; }
         if (pt.dying) {
-          aims[i] = null;
+          dirs[i] = null;
           pt.alpha -= dt / 0.18;
           if (pt.alpha <= 0) { pointers[i] = null; continue; }
         } else {
-          aims[i] = liveFlick(pt, now);
+          dirs[i] = stickDir(pt);
         }
         const dx = pt.curX - pt.baseX;
         const dy = pt.curY - pt.baseY;
@@ -261,7 +261,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     reset() {
       pointers[0] = pointers[1] = null;
       released[0] = released[1] = null;
-      aims[0] = aims[1] = null;
+      dirs[0] = dirs[1] = null;
       keys.clear();
       keyAction[0] = keyAction[1] = null;
     },

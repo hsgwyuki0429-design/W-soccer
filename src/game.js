@@ -61,6 +61,7 @@ function makeUnit(index, team, x, y) {
     cooldown: 0,
     dashT: 0,
     dashX: 0, dashY: 0,
+    kickT: 0,            // ふくらみの残り時間（見た目用。物理には効かない）
     contact: false,      // 直前ステップでボールに触れていたか（イベント連打防止）
     faceX: 0,
     faceY: team === TEAM_PLAYER ? -1 : 1,
@@ -121,6 +122,7 @@ function placeKickoff(s, possess) {
     u.vx = u.vy = 0;
     u.cooldown = 0;
     u.dashT = 0;
+    u.kickT = 0;
     u.contact = false;
     u.faceX = 0;
     u.faceY = u.team === TEAM_PLAYER ? -1 : 1;
@@ -239,39 +241,50 @@ function applyIntent(s, u, intent, dt, heat) {
   const mag = clamp(len(mv.x, mv.y), 0, 1);
 
   if (u.cooldown > 0) u.cooldown = Math.max(0, u.cooldown - dt);
+  if (u.kickT > 0) u.kickT = Math.max(0, u.kickT - dt);
 
-  // 向き（キーボード時のフリック方向などに使う）
+  // 向き（入力が無いときの拠りどころ）
   if (mag > 0.15) {
     const n = norm(mv.x, mv.y);
     u.faceX = n.x;
     u.faceY = n.y;
   }
 
-  // フリック解決：ボール至近ならキック、そうでなければダッシュ。
+  // アクション解決：ボール至近ならキック、そうでなければダッシュ。
+  // intent.flick は「アクションを起こす」という合図と、その向き。
+  // 向きが立っていなければ、直前まで向いていた方向を使う。
   if (intent.flick && u.cooldown <= 0) {
-    const d = norm(intent.flick.x, intent.flick.y);
+    let d = norm(intent.flick.x, intent.flick.y);
+    if (d.x === 0 && d.y === 0) d = norm(u.faceX, u.faceY);
     if (d.x !== 0 || d.y !== 0) {
       const b = s.ball;
       const dist = Math.hypot(b.x - u.x, b.y - u.y);
       const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
 
       if (dist <= reach) {
-        const speed = CONFIG.kick.speed * heat;
-        b.vx = d.x * speed;
-        b.vy = d.y * speed;
-        // 蹴った瞬間に足元から離す（吸着を作らないための最小限の押し出し）
+        // 駒が一瞬ふくらんで、その反発でボールを弾き出す。
+        // だから飛ぶ向きは入力ではなく「駒の中心 → ボール」で決まる。
+        // 狙いは指の角度ではなく、体をどこに置いたかで決める。
+        // 完全に重なっているときだけ、逃がす向きが無いので入力を使う。
         const away = norm(b.x - u.x, b.y - u.y);
+        const k = (away.x !== 0 || away.y !== 0) ? away : d;
+
+        const speed = CONFIG.kick.speed * heat;
+        b.vx = k.x * speed;
+        b.vy = k.y * speed;
+        // 蹴った瞬間に足元から離す（吸着を作らないための最小限の押し出し）
         const sep = CONFIG.unit.radius + CONFIG.ball.radius + 0.5;
-        b.x = u.x + (away.x || d.x) * sep;
-        b.y = u.y + (away.y || d.y) * sep;
+        b.x = u.x + k.x * sep;
+        b.y = u.y + k.y * sep;
 
         registerTouch(s, u, true);
         u.cooldown = CONFIG.unit.cooldown;
-        u.faceX = d.x; u.faceY = d.y;
+        u.kickT = CONFIG.kick.popTime;
+        u.faceX = k.x; u.faceY = k.y;
         emit(s, {
           type: 'kick',
           unit: u.index, team: u.team,
-          x: b.x, y: b.y, dx: d.x, dy: d.y,
+          x: b.x, y: b.y, dx: k.x, dy: k.y,
           power: speed / CONFIG.kick.speed,
         });
       } else {

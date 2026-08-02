@@ -197,7 +197,7 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
-    if (input) drawAims(ctx, s, input, myUnitsInScreenOrder(s), flip, teamColor);
+    if (input) drawMoveArrows(ctx, input, myUnitsInScreenOrder(s), flip, teamColor);
     drawUnits(ctx, s, fx, input, myTeam, myUnitsInScreenOrder(s), teamColor);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
@@ -323,10 +323,12 @@ function drawGoals(ctx, s) {
 // ---------------------------------------------------------------- entities
 
 function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
-  const r = CONFIG.unit.radius;
-
   for (const u of s.units) {
     const color = colorOf(u.team);
+    // 蹴った瞬間だけ一瞬ふくらむ。ボールを弾き出したのはこの反発、という見せ方。
+    // 立ち上がりは即座、戻りは平方根でゆっくり抜ける。
+    const pop = u.kickT > 0 ? Math.sqrt(u.kickT / CONFIG.kick.popTime) : 0;
+    const r = CONFIG.unit.radius * (1 + CONFIG.kick.pop * pop);
 
     // 盤面から数ミリ浮かせるだけのソフトシャドウ
     ctx.save();
@@ -501,49 +503,43 @@ function drawRipples(ctx, fx) {
 // ---------------------------------------------------------------- 操作の表示
 
 /**
- * 蹴る向きの予告矢印。
- * 「今この指のまま離したらボールはどっちへ飛ぶか」をボールから伸ばす。
- * 出す条件は実際に蹴れる条件とそろえてある（足元にある・クールダウンが明けている・
- * 指が動いている）。出ていなければ、離してもキックにはならない。
+ * 進行方向の矢印。動かしているあいだ、駒の前に短く太く半透明で出す。
  *
- * aims は画面座標。盤面を180度回して見ている側では、ワールドの向きは逆になる。
+ * ボールがどこへ飛ぶかの予告ではない。キックは駒の中心 → ボールの向きへ
+ * 飛ぶので、狙いは指の角度ではなく体の置き方で決まる。
+ * この矢印が示すのは「今どっちへ進んでいるか」＝ そのまま離したときに
+ * ダッシュする向きでもある。
+ *
+ * dirs は画面座標。盤面を180度回して見ている側では、ワールドの向きは逆になる。
  */
-function drawAims(ctx, s, input, screenOrder, flip, colorOf) {
-  const b = s.ball;
-  const A = CONFIG.aim;
-  const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
+function drawMoveArrows(ctx, input, screenOrder, flip, colorOf) {
+  const A = CONFIG.moveArrow;
+  const r = CONFIG.unit.radius;
+  const k = flip ? -1 : 1;
 
   for (let side = 0; side < 2; side++) {
-    const a = input.aims && input.aims[side];
+    const d = input.dirs && input.dirs[side];
     const u = screenOrder[side];
-    if (!a || !u || u.cooldown > 0) continue;
-    if (Math.hypot(b.x - u.x, b.y - u.y) > reach) continue;
+    if (!d || !u) continue;
 
-    const k = flip ? -1 : 1;
-    const color = colorOf(u.team);
-    const r0 = CONFIG.ball.radius * 2.2;
+    const r0 = r + A.gap;
     const r1 = r0 + A.length;
 
     ctx.save();
-    ctx.translate(b.x, b.y);
-    ctx.rotate(Math.atan2(a.y * k, a.x * k));
+    ctx.translate(u.x, u.y);
+    ctx.rotate(Math.atan2(d.y * k, d.x * k));
+    ctx.globalAlpha = A.alpha;
+    ctx.fillStyle = colorOf(u.team);
 
-    ctx.globalAlpha = 0.7;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3.2 * S;
-    ctx.lineCap = 'round';
+    // 軸と矢じりを一筆で。太く短く、輪郭は付けない。
     ctx.beginPath();
-    ctx.moveTo(r0, 0);
-    ctx.lineTo(r1 - A.head * 0.7, 0);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(r1, 0);
-    ctx.lineTo(r1 - A.head, A.head * 0.52);
-    ctx.lineTo(r1 - A.head, -A.head * 0.52);
+    ctx.moveTo(r0, -A.width / 2);
+    ctx.lineTo(r1 - A.head, -A.width / 2);
+    ctx.lineTo(r1 - A.head, -A.head * 0.5);
+    ctx.lineTo(r1, 0);
+    ctx.lineTo(r1 - A.head, A.head * 0.5);
+    ctx.lineTo(r1 - A.head, A.width / 2);
+    ctx.lineTo(r0, A.width / 2);
     ctx.closePath();
     ctx.fill();
 

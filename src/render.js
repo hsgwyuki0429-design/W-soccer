@@ -47,8 +47,7 @@ export function createRenderer(canvas) {
   // 縦画面ではコート全体が入る倍率で固定され、従来と同じ絵になる。
   // 横画面はコートが画面に収まらないので、注視点（ボールと自分の2駒）を
   // 追いかけながら、その広がりに応じてズームする。
-  // bias = 視点を進行方向のどちら側へずらすか。-1 で駒が画面下、+1 で画面上。
-  const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1, bias: -1, biasTarget: -1 };
+  const cam = { x: CONFIG.field.w / 2, y: CONFIG.field.h / 2, scale: 1 };
 
   // 自分がどちらのチームか。対人戦で team 1 になったときは盤面を180度回して
   // 「自分の駒が手前・攻める方向が奥」を保つ。回さないと、上下も左右も逆の
@@ -68,11 +67,6 @@ export function createRenderer(canvas) {
   }
 
   const CAM = CONFIG.camera;
-
-  /** コートで画面を埋めきる倍率（余白なし。コートの一部しか見えない） */
-  function fillScale() {
-    return Math.max(view.cssW / CONFIG.field.w, view.cssH / CONFIG.field.h);
-  }
 
   function limits() {
     // 全体が入る倍率（下限）と、寄れる上限。
@@ -111,11 +105,6 @@ export function createRenderer(canvas) {
       view.netTop = view.uiScale * 56;   // 全体表示ではないので、上端に帯だけ確保する
     }
     return view;
-  }
-
-  /** 全員（ボール＋4駒）。ポイント操作で必ず画面に収める対象。 */
-  function everyone(s) {
-    return [s.ball, s.units[0], s.units[1], s.units[2], s.units[3]];
   }
 
   /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ） */
@@ -158,56 +147,14 @@ export function createRenderer(canvas) {
     cam.x = c.x; cam.y = c.y;
   }
 
-  /** (cx,cy) を中心にしたとき、全員が margin ぶんの余白つきで入る倍率 */
-  function containScale(s, cx, cy) {
-    let hw = 0, hh = 0;
-    for (const e of everyone(s)) {
-      hw = Math.max(hw, Math.abs(e.x - cx));
-      hh = Math.max(hh, Math.abs(e.y - cy));
-    }
-    hw += CAM.keepMargin;
-    hh += CAM.keepMargin;
-    return Math.min(view.cssW / (2 * hw), view.cssH / (2 * hh));
-  }
-
   /**
    * @param {boolean} snap キックオフやリセットでは補間せず飛ばす
-   * @param {'stick'|'point'} mode 操作方法でカメラの性格を変える
    */
-  function updateCamera(s, dt, snap = false, mode = 'stick') {
+  function updateCamera(s, dt, snap = false) {
     const f = focus(s);
-    let want, ty;
-
-    if (mode === 'point') {
-      const lim = limits();
-      const fill = fillScale();
-
-      // 「指を置いた先へ進む」操作なので、進む先が広く見えていないと置けない。
-      // 上へ向かっているなら駒を画面の下へ、下へ向かっているなら画面の上へ。
-      // 自駒2つの平均の縦速度で決め、一定以上動いたときだけ向きを切り替える
-      // （止まった瞬間に視点が跳ね返らないよう、しきい値未満では前の向きを保つ）。
-      const vy = (s.units[myTeam * 2].vy + s.units[myTeam * 2 + 1].vy) / 2;
-      if (Math.abs(vy) > CONFIG.unit.maxSpeed * CAM.biasFlipSpeed) {
-        cam.biasTarget = (flip ? -vy : vy) < 0 ? -1 : 1;
-      }
-      const kb = snap ? 1 : 1 - Math.exp(-dt / 0.55);
-      cam.bias += (cam.biasTarget - cam.bias) * kb;
-
-      // 視点の中心は自分たち＋ボール。ずらし量は今の倍率から見積もる。
-      ty = f.y + CAM.pointBias * (view.cssH / Math.max(cam.scale, 1e-4)) * cam.bias * (flip ? -1 : 1);
-
-      // その中心から見て、相手も含めた全員が必ず入る倍率を求める。
-      // 収まるなら画面を埋め、収まらないぶんだけ引く。
-      // 中心は後で盤外に出ないよう丸められるので、丸めた後の位置で取り直す
-      // （丸めを無視すると、端に寄ったときに反対側がはみ出す）。
-      want = clamp(Math.min(fill, containScale(s, f.x, ty)), lim.min, fill);
-      const c2 = clampedCenter(f.x, ty, want);
-      want = clamp(Math.min(fill, containScale(s, c2.x, c2.y)), lim.min, fill);
-    } else {
-      const lim = limits();
-      want = clamp(Math.min(view.cssW / f.w, view.cssH / f.h), lim.min, lim.max);
-      ty = f.y;
-    }
+    const lim = limits();
+    const want = clamp(Math.min(view.cssW / f.w, view.cssH / f.h), lim.min, lim.max);
+    const ty = f.y;
 
     if (snap) {
       cam.scale = want;
@@ -224,15 +171,6 @@ export function createRenderer(canvas) {
       cam.scale += (want - cam.scale) * kz;
     }
     clampCenter(cam.scale);
-  }
-
-  /** canvas 基準の CSS px → ワールド座標（カメラの寄り引きを考慮する） */
-  function toWorld(x, y) {
-    const k = flip ? -1 : 1;
-    return {
-      x: cam.x + k * (x - view.cssW / 2) / cam.scale,
-      y: cam.y + k * (y - view.cssH / 2) / cam.scale,
-    };
   }
 
   function draw(s, fx, input) {
@@ -259,7 +197,7 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
-    if (input && input.mode === 'point') drawTargets(ctx, s, input, myUnitsInScreenOrder(s), teamColor);
+    if (input) drawAims(ctx, s, input, myUnitsInScreenOrder(s), flip, teamColor);
     drawUnits(ctx, s, fx, input, myTeam, myUnitsInScreenOrder(s), teamColor);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
@@ -267,7 +205,7 @@ export function createRenderer(canvas) {
     ctx.restore();
 
     // ジョイスティックは画面空間の要素。カメラと一緒に動いてはいけない。
-    if (input && input.mode === 'stick') drawSticks(ctx, view, input);
+    if (input) drawSticks(ctx, view, input);
 
     if (fx.flash.a > 0.001) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -279,7 +217,7 @@ export function createRenderer(canvas) {
   }
 
   return {
-    ctx, view, cam, resize, updateCamera, draw, toWorld,
+    ctx, view, cam, resize, updateCamera, draw,
     myUnitsInScreenOrder,
     teamColor,
     get flip() { return flip; },
@@ -287,8 +225,6 @@ export function createRenderer(canvas) {
     setViewpoint(team) {
       myTeam = team | 0;
       flip = myTeam === 1;
-      cam.biasTarget = -1;
-      cam.bias = -1;
     },
   };
 }
@@ -564,41 +500,55 @@ function drawRipples(ctx, fx) {
 
 // ---------------------------------------------------------------- 操作の表示
 
-/** point 操作の目的地マーカー。ワールド空間なのでコート上の同じ場所を指し続ける。 */
-function drawTargets(ctx, s, input, screenOrder, colorOf) {
-  const r = CONFIG.unit.radius;
+/**
+ * 蹴る向きの予告矢印。
+ * 「今この指のまま離したらボールはどっちへ飛ぶか」をボールから伸ばす。
+ * 出す条件は実際に蹴れる条件とそろえてある（足元にある・クールダウンが明けている・
+ * 指が動いている）。出ていなければ、離してもキックにはならない。
+ *
+ * aims は画面座標。盤面を180度回して見ている側では、ワールドの向きは逆になる。
+ */
+function drawAims(ctx, s, input, screenOrder, flip, colorOf) {
+  const b = s.ball;
+  const A = CONFIG.aim;
+  const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
+
   for (let side = 0; side < 2; side++) {
-    const pt = input.pointers[side];
-    if (!pt) continue;
-    const a = Math.max(0, pt.alpha);
+    const a = input.aims && input.aims[side];
     const u = screenOrder[side];
+    if (!a || !u || u.cooldown > 0) continue;
+    if (Math.hypot(b.x - u.x, b.y - u.y) > reach) continue;
+
+    const k = flip ? -1 : 1;
     const color = colorOf(u.team);
+    const r0 = CONFIG.ball.radius * 2.2;
+    const r1 = r0 + A.length;
 
-    // 駒から目的地への細い導線
-    ctx.strokeStyle = `rgba(255,255,255,${0.18 * a})`;
-    ctx.lineWidth = 1.5 * S;
-    ctx.setLineDash([6 * S, 7 * S]);
-    ctx.beginPath();
-    ctx.moveTo(u.x, u.y);
-    ctx.lineTo(pt.wx, pt.wy);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(Math.atan2(a.y * k, a.x * k));
 
-    // 目的地のリング
-    const grow = Math.min(1, (performance.now() - pt.born) / 130);
-    const rad = r * (pt.dying ? 0.9 : 0.8 + 0.2 * grow);
+    ctx.globalAlpha = 0.7;
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.85 * a;
-    ctx.lineWidth = 2.4 * S;
+    ctx.lineWidth = 3.2 * S;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(pt.wx, pt.wy, rad, 0, Math.PI * 2);
+    ctx.moveTo(r0, 0);
+    ctx.lineTo(r1 - A.head * 0.7, 0);
     ctx.stroke();
+    ctx.lineCap = 'butt';
+
+    ctx.globalAlpha = 0.9;
     ctx.fillStyle = color;
-    ctx.globalAlpha = 0.35 * a;
     ctx.beginPath();
-    ctx.arc(pt.wx, pt.wy, rad * 0.28, 0, Math.PI * 2);
+    ctx.moveTo(r1, 0);
+    ctx.lineTo(r1 - A.head, A.head * 0.52);
+    ctx.lineTo(r1 - A.head, -A.head * 0.52);
+    ctx.closePath();
     ctx.fill();
+
     ctx.globalAlpha = 1;
+    ctx.restore();
   }
 }
 

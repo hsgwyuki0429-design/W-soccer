@@ -1,10 +1,9 @@
 // ui.js — DOM オーバーレイ（HUD / バナー / タイトル / リザルト）。
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
-const MODE_KEY = 'pairkick.controlMode';
 const OPP_KEY = 'pairkick.opponent';
 
-export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
+export function createUI(onPrimary, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
 
   const hud = el('hud');
@@ -19,14 +18,7 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
   const ovBody = el('ov-body');
   const ovHints = el('ov-hints');
   const ovBtn = el('ov-btn');
-  const ovModes = el('ov-modes');
   const ovOpps = el('ov-opponents');
-  const hintTitle = el('hint-a-t');
-  const hintSub = el('hint-a-s');
-
-  let mode = 'stick';
-  try { mode = localStorage.getItem(MODE_KEY) || 'stick'; } catch (_) {}
-  if (mode !== 'stick' && mode !== 'point') mode = 'stick';
 
   let opponent = 'bot';
   try { opponent = localStorage.getItem(OPP_KEY) || 'bot'; } catch (_) {}
@@ -47,26 +39,6 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
     opponent = b.dataset.opp;
     try { localStorage.setItem(OPP_KEY, opponent); } catch (_) {}
     paintOpp();
-  });
-
-  function paintMode() {
-    for (const b of ovModes.querySelectorAll('.seg')) {
-      b.classList.toggle('on', b.dataset.mode === mode);
-    }
-    hintTitle.textContent = mode === 'point' ? '置く' : '倒す';
-    hintSub.textContent = mode === 'point' ? 'そこへ進む' : '移動';
-  }
-
-  ovModes.addEventListener('pointerdown', (e) => e.stopPropagation());
-  ovModes.addEventListener('click', (e) => {
-    const b = e.target.closest('.seg');
-    if (!b) return;
-    e.preventDefault();
-    e.stopPropagation();
-    mode = b.dataset.mode;
-    try { localStorage.setItem(MODE_KEY, mode); } catch (_) {}
-    paintMode();
-    onModeChange(mode);
   });
 
   let bannerTimer = 0;
@@ -91,13 +63,10 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
     primary();
   });
 
-  paintMode();
   paintOpp();
 
   return {
-    get mode() { return mode; },
     get opponent() { return opponent; },
-    applyMode() { onModeChange(mode); },
 
     setUnit(u, hudBand) {
       const root = document.documentElement.style;
@@ -151,7 +120,6 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
       ovBody.innerHTML = '2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。';
       ovHints.style.display = '';
       ovOpps.style.display = '';
-      ovModes.style.display = '';
       ovBtn.textContent = 'はじめる';
       ovBtn.disabled = false;
       overlay.classList.remove('hidden');
@@ -166,7 +134,6 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
       ovBody.innerHTML = 'この画面のURLを相手に渡してください。<br>2人そろうと自動で始まります。';
       ovHints.style.display = 'none';
       ovOpps.style.display = 'none';
-      ovModes.style.display = 'none';
       ovBtn.textContent = 'やめる';
       ovBtn.disabled = false;
       overlay.classList.remove('hidden');
@@ -189,7 +156,6 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
       ovBody.textContent = text;
       ovHints.style.display = 'none';
       ovOpps.style.display = '';
-      ovModes.style.display = '';
       ovBtn.textContent = 'タイトルへ';
       ovBtn.disabled = false;
       overlay.classList.remove('hidden');
@@ -199,7 +165,6 @@ export function createUI(onPrimary, onModeChange, onCancel = () => {}) {
     showResult(win, a, b) {
       waitingCancel = false;
       ovOpps.style.display = '';
-      ovModes.style.display = '';
       ovKicker.textContent = `${a} — ${b}`;
       ovTitle.textContent = win ? 'WIN' : 'LOSE';
       ovTitle.className = win ? 'win' : 'lose';

@@ -212,8 +212,7 @@ html, body {
   opacity: 0.66;
 }
 
-#ov-opponents,
-#ov-modes {
+#ov-opponents {
   display: flex;
   gap: 0;
   margin: calc(var(--u) * 10) 0 0;
@@ -302,7 +301,7 @@ html, body {
   }
   #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
   #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
-  #ov-modes, #ov-opponents { margin-top: calc(var(--u) * 8); }
+  #ov-opponents { margin-top: calc(var(--u) * 8); }
   .seg { padding: calc(var(--u) * 6) 0; }
   #ov-hints { margin: calc(var(--u) * 10) 0 calc(var(--u) * 10); }
   .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }

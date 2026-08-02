@@ -22,7 +22,6 @@ const audio = createAudio();
 const fx = FX.createEffects();
 const ui = createUI(
   onPrimary,
-  (m) => { input.setMode(m); snapCamera = true; },
   () => { leaveVersus(); ui.showTitle(); },   // 相手待ちをやめる
 );
 
@@ -35,7 +34,6 @@ const bot = createBot();
 const intents = [null, null, null, null];
 
 const input = createInput(canvas, {
-  toWorld: renderer.toWorld,
   onFeedback: (kind) => { if (kind === 'stick') audio.click(); },
 });
 
@@ -144,7 +142,6 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 document.addEventListener('visibilitychange', () => { last = performance.now(); });
 
 resize();
-ui.applyMode();          // 保存されている操作方法を input へ反映
 ui.showTitle();
 ui.setScore(0, 0);
 
@@ -236,15 +233,7 @@ function handleEvents(events) {
 // ---------------------------------------------------------------- loop
 
 function frame(now) {
-  // ホーム画面に追加したときにオフラインでも起動できるようにする。
-// 失敗しても遊べなくはならないので、握りつぶしてよい。
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  });
-}
-
-requestAnimationFrame(frame);
+  requestAnimationFrame(frame);
 
   let dt = (now - last) / 1000;
   last = now;
@@ -274,7 +263,7 @@ requestAnimationFrame(frame);
 
   watchPhase();
   FX.updateEffects(fx, dt);
-  renderer.updateCamera(state, dt, snapCamera, input.mode);
+  renderer.updateCamera(state, dt, snapCamera);
   snapCamera = false;
   audio.setHeat(heatRatio(state));
   ui.setScore(state.score[myTeam()], state.score[1 - myTeam()]);

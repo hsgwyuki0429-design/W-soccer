@@ -88,6 +88,7 @@ export function createState() {
     chainTeam: -1,
     kickoffTeam: TEAM_PLAYER,
     stuckT: 0,
+    pinX: F.w / 2, pinY: 665 * S,   // 膠着を測る基準点（ボールがここから離れないと動いていない扱い）
     squeezeT: 0,
     wallCool: 0,
     events: [],
@@ -133,6 +134,8 @@ function placeKickoff(s, possess) {
   s.chain = 0;
   s.chainTeam = -1;
   s.stuckT = 0;
+  s.pinX = s.ball.x;
+  s.pinY = s.ball.y;
   s.squeezeT = 0;
   s.heatT = 0;
   s.possess = possess;
@@ -373,6 +376,17 @@ function resolveUnitUnit(s) {
   }
 }
 
+/**
+ * ぶつかる速さで変わる反発係数。
+ * 触れただけなら跳ね返さず押すだけ、叩きつけられたら弾く。
+ * @param {number} speed 法線方向の相対速度の大きさ（正）
+ */
+function restitution(speed) {
+  const B = CONFIG.ball;
+  const t = clamp((speed - B.softSpeed) / (B.hardSpeed - B.softSpeed), 0, 1);
+  return B.bounce + (B.bounceHard - B.bounce) * t;
+}
+
 // 駒とボールの衝突。マグネットも吸着も無し、素直な反発だけ。
 function resolveUnitBall(s, heat, dt) {
   const b = s.ball;
@@ -390,7 +404,7 @@ function resolveUnitBall(s, heat, dt) {
     const rvx = b.vx - u.vx, rvy = b.vy - u.vy;
     const vn = rvx * nx + rvy * ny;
     if (vn < 0) {
-      const j = -(1 + CONFIG.ball.bounce) * vn;
+      const j = -(1 + restitution(-vn)) * vn;
       b.vx += j * nx;
       b.vy += j * ny;
       limitSpeed(b, CONFIG.ball.maxSpeed * heat);
@@ -549,20 +563,30 @@ function registerTouch(s, u, isKick) {
 
 // ---------------------------------------------------------------- stuck / goal
 
+// 「ボールが進んでいない」を、速さではなく移動量で見る。
+//
+// 速さで見ていると、駒に小突かれ続けているボールを見逃す。毎フレーム多少は
+// 動いているのでカウンタが立ち上がらず、その場で押し合ったまま何分も進まない。
+// 反発を寝かせてボールが足元に残るようにしたぶん、この形の膠着が出やすくなった。
+// 実測：120試合で決着なしが 0 → 3 件、無得点が420秒続いた試合まで出た。
+//
+// 一定時間 stuckRadius の円から出られなければ、中央へ押し出す。
 function checkStuck(s, dt) {
   const b = s.ball;
-  if (Math.hypot(b.vx, b.vy) < CONFIG.match.stuckSpeed) {
-    s.stuckT += dt;
-    if (s.stuckT >= CONFIG.match.stuckSeconds) {
-      const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
-      b.vx += n.x * 160 * V;
-      b.vy += n.y * 160 * V;
-      s.stuckT = 0;
-      emit(s, { type: 'nudge', x: b.x, y: b.y });
-    }
-  } else {
+  if (Math.hypot(b.x - s.pinX, b.y - s.pinY) > CONFIG.match.stuckRadius) {
+    s.pinX = b.x; s.pinY = b.y;
     s.stuckT = 0;
+    return;
   }
+  s.stuckT += dt;
+  if (s.stuckT < CONFIG.match.stuckSeconds) return;
+
+  const n = norm(F.w / 2 - b.x, F.h / 2 - b.y);
+  b.vx += n.x * 160 * V;
+  b.vy += n.y * 160 * V;
+  s.stuckT = 0;
+  s.pinX = b.x; s.pinY = b.y;
+  emit(s, { type: 'nudge', x: b.x, y: b.y });
 }
 
 function checkGoal(s) {

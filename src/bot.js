@@ -78,16 +78,22 @@ export function updateBot(bot, s, intents, dt) {
 }
 
 /**
- * 蹴る / 踏み込む瞬間の判定。think ではなく毎フレーム見る。
+ * 踏み込む瞬間の判定。think ではなく毎フレーム見る。
  * 向きが揃うのは一瞬なので、思考の間隔（rethinkMs）で待っていると撃ち逃す。
+ *
+ * 動作はひとつしかない（踏み込み）ので、ボールを叩くのも相手を潰すのも同じ意図。
+ * 違うのは踏み込む向きと、そのとき前に何があるかだけ。
  */
 function fire(plan, s, u, dt) {
   const ball = s.ball;
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
 
-  if (u.cooldown > 0) { plan.aimT = 0; return null; }
+  if (u.stunT > 0 || u.cooldown > 0) { plan.aimT = 0; return null; }
 
+  // 離れた所から踏み込むと、届くころには位置関係が変わっていて狙いが崩れる
+  // （実測：踏み込み118回に対しボールへ当たったのは64回、オウンゴール22件）。
+  // 接触距離まで詰めてから踏み抜く。
   if (dist <= reach) {
     const opts = plan.options;
     if (!opts || !opts.length) { plan.aimT = 0; return null; }
@@ -157,18 +163,7 @@ function planChaser(bot, s, u, mate, attackY, mouth) {
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
 
-  // タックルダッシュ：相手がボールを持っていて、自分がやや遠いとき。
-  // クールダウン中は積まない。積んでおくと、明けた瞬間に必ず踏み込むことになり、
-  // ボールに追いついたときに蹴るぶんのクールダウンが残らなくなる。
-  const foe = nearestFoe(s, u.team, ball.x, ball.y);
-  if (u.cooldown <= 0 && foe &&
-      Math.hypot(foe.x - ball.x, foe.y - ball.y) < 46 * S &&
-      dist < B.tackleRange && dist > reach + 12 * S && Math.random() < 0.45) {
-    const d = norm(ball.x - u.x, ball.y - u.y);
-    plan.tackle = { x: d.x + rnd(B.noise), y: d.y + rnd(B.noise), reason: 'tackle' };
-  } else {
-    plan.tackle = null;
-  }
+  plan.tackle = null;   // 体当たりは支援側の仕事（planSupport）
 }
 
 /**
@@ -279,7 +274,26 @@ function planSupport(bot, s, u, chaser, attackY, defendY) {
   // 支援側もボールが目の前に転がってきたら蹴る
   const dist = Math.hypot(ball.x - u.x, ball.y - u.y);
   const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
-  plan.tackle = null;
+
+  // 体当たりは支援側の仕事。ボールを持っている相手そのものを潰しに行く。
+  //
+  // ボールへ突っ込むのではない。踏み込みでボールを叩くと飛ぶ向きは位置関係で
+  // 決まるので、自陣へ叩き返すほうが多くなる（実測でオウンゴールが得点の18%）。
+  // 相手を潰せば1秒動けなくなり、そのあいだに追う側がボールを拾える。
+  //
+  // 追う側にはやらせない。両チームの追う側同士が至近で潰し合うと、
+  // ボールが誰の物にもならないまま試合が進まなくなる（実測で1点59秒）。
+  const foe = nearestFoe(s, u.team, ball.x, ball.y);
+  const foeDist = foe ? Math.hypot(foe.x - u.x, foe.y - u.y) : Infinity;
+  if (u.cooldown <= 0 && u.stunT <= 0 && foe && foe.stunT <= 0 &&
+      Math.hypot(foe.x - ball.x, foe.y - ball.y) < 40 * S &&
+      foeDist < B.tackleRange && foeDist > CONFIG.unit.radius * 2 &&
+      Math.random() < B.tackleChance) {
+    const d = norm(foe.x - u.x, foe.y - u.y);
+    plan.tackle = { x: d.x + rnd(B.noise * 0.5), y: d.y + rnd(B.noise * 0.5), reason: 'tackle' };
+  } else {
+    plan.tackle = null;
+  }
   if (dist <= reach * 2.2) {
     // 蹴れる距離の少し手前から狙いを決めておく。転がってきた所を蹴るには、
     // 触れてから考えていては間に合わない（向きは体の置き方でしか作れない）。

@@ -61,7 +61,8 @@ function makeUnit(index, team, x, y) {
     cooldown: 0,
     dashT: 0,
     dashX: 0, dashY: 0,
-    kickT: 0,            // ふくらみの残り時間（見た目用。物理には効かない）
+    stunT: 0,            // 体当たりを食らって動けない残り時間
+    dashHit: false,      // この踏み込みで既にボールを叩いたか（イベントを1回に絞る）
     contact: false,      // 直前ステップでボールに触れていたか（イベント連打防止）
     faceX: 0,
     faceY: team === TEAM_PLAYER ? -1 : 1,
@@ -122,7 +123,8 @@ function placeKickoff(s, possess) {
     u.vx = u.vy = 0;
     u.cooldown = 0;
     u.dashT = 0;
-    u.kickT = 0;
+    u.stunT = 0;
+    u.dashHit = false;
     u.contact = false;
     u.faceX = 0;
     u.faceY = u.team === TEAM_PLAYER ? -1 : 1;
@@ -208,7 +210,7 @@ export function step(s, intents, dt) {
   for (let i = 0; i < s.units.length; i++) {
     const u = s.units[i];
     const held = kickoff && u.team !== s.kickoffTeam;
-    applyIntent(s, u, held ? NO_INTENT : (intents[i] || NO_INTENT), dt, heat);
+    applyIntent(s, u, held ? NO_INTENT : (intents[i] || NO_INTENT), dt);
   }
 
   integrateUnits(s, dt);
@@ -236,12 +238,22 @@ export function step(s, intents, dt) {
 
 // ---------------------------------------------------------------- intent
 
-function applyIntent(s, u, intent, dt, heat) {
+function applyIntent(s, u, intent, dt) {
   const mv = intent.move || NO_INTENT.move;
   const mag = clamp(len(mv.x, mv.y), 0, 1);
 
   if (u.cooldown > 0) u.cooldown = Math.max(0, u.cooldown - dt);
-  if (u.kickT > 0) u.kickT = Math.max(0, u.kickT - dt);
+
+  // 体当たりを食らっているあいだは何もできない。
+  // 押されて滑るのはそのまま（物理の外には置かない）。自分では進めないだけ。
+  if (u.stunT > 0) {
+    u.stunT = Math.max(0, u.stunT - dt);
+    u.dashT = 0;
+    const k = CONFIG.unit.accelSmoothing;
+    u.vx -= u.vx * k;
+    u.vy -= u.vy * k;
+    return;
+  }
 
   // 向き（入力が無いときの拠りどころ）
   if (mag > 0.15) {
@@ -250,51 +262,20 @@ function applyIntent(s, u, intent, dt, heat) {
     u.faceY = n.y;
   }
 
-  // アクション解決：ボール至近ならキック、そうでなければダッシュ。
-  // intent.flick は「アクションを起こす」という合図と、その向き。
-  // 向きが立っていなければ、直前まで向いていた方向を使う。
+  // アクションはひとつだけ。ボールを持っているかどうかで分岐しない。
+  // 踏み込んだ先にボールがあれば体が当たって飛び、相手がいれば相手が潰れる。
+  // 向きが立っていなければ、直前まで向いていた方向へ踏み込む。
   if (intent.flick && u.cooldown <= 0) {
     let d = norm(intent.flick.x, intent.flick.y);
     if (d.x === 0 && d.y === 0) d = norm(u.faceX, u.faceY);
     if (d.x !== 0 || d.y !== 0) {
-      const b = s.ball;
-      const dist = Math.hypot(b.x - u.x, b.y - u.y);
-      const reach = CONFIG.unit.radius + CONFIG.ball.radius + CONFIG.kick.reachPad;
-
-      if (dist <= reach) {
-        // 駒が一瞬ふくらんで、その反発でボールを弾き出す。
-        // だから飛ぶ向きは入力ではなく「駒の中心 → ボール」で決まる。
-        // 狙いは指の角度ではなく、体をどこに置いたかで決める。
-        // 完全に重なっているときだけ、逃がす向きが無いので入力を使う。
-        const away = norm(b.x - u.x, b.y - u.y);
-        const k = (away.x !== 0 || away.y !== 0) ? away : d;
-
-        const speed = CONFIG.kick.speed * heat;
-        b.vx = k.x * speed;
-        b.vy = k.y * speed;
-        // 蹴った瞬間に足元から離す（吸着を作らないための最小限の押し出し）
-        const sep = CONFIG.unit.radius + CONFIG.ball.radius + 0.5;
-        b.x = u.x + k.x * sep;
-        b.y = u.y + k.y * sep;
-
-        registerTouch(s, u, true);
-        u.cooldown = CONFIG.unit.cooldown;
-        u.kickT = CONFIG.kick.popTime;
-        u.faceX = k.x; u.faceY = k.y;
-        emit(s, {
-          type: 'kick',
-          unit: u.index, team: u.team,
-          x: b.x, y: b.y, dx: k.x, dy: k.y,
-          power: speed / CONFIG.kick.speed,
-        });
-      } else {
-        u.dashT = CONFIG.dash.duration;
-        u.dashX = d.x;
-        u.dashY = d.y;
-        u.cooldown = CONFIG.unit.cooldown;
-        u.faceX = d.x; u.faceY = d.y;
-        emit(s, { type: 'dash', unit: u.index, team: u.team, x: u.x, y: u.y, dx: d.x, dy: d.y });
-      }
+      u.dashT = CONFIG.dash.duration;
+      u.dashX = d.x;
+      u.dashY = d.y;
+      u.dashHit = false;
+      u.cooldown = CONFIG.unit.cooldown;
+      u.faceX = d.x; u.faceY = d.y;
+      emit(s, { type: 'dash', unit: u.index, team: u.team, x: u.x, y: u.y, dx: d.x, dy: d.y });
     }
   }
 
@@ -384,6 +365,12 @@ function resolveUnitUnit(s) {
             strength: clamp(Math.abs(rvn) / (600 * V), 0, 1),
           });
         }
+        // 踏み込んで相手にぶつけた側が勝つ。潰された側は動けなくなる。
+        // n は a→b 向きなので、a は n の向きに、b は n の逆向きに突っ込んでいる。
+        if (a.team !== b.team) {
+          if (a.dashT > 0 && a.vx * nx + a.vy * ny > 0) stun(s, b, a);
+          if (b.dashT > 0 && b.vx * nx + b.vy * ny < 0) stun(s, a, b);
+        }
       }
     }
   }
@@ -398,6 +385,14 @@ function restitution(speed) {
   const B = CONFIG.ball;
   const t = clamp((speed - B.softSpeed) / (B.hardSpeed - B.softSpeed), 0, 1);
   return B.bounce + (B.bounceHard - B.bounce) * t;
+}
+
+/** 体当たりを食らわせる。既に潰れている相手を上塗りして伸ばすことはしない。 */
+function stun(s, victim, by) {
+  if (victim.stunT > 0) return;
+  victim.stunT = CONFIG.unit.stunTime;
+  victim.dashT = 0;
+  emit(s, { type: 'stun', unit: victim.index, team: victim.team, by: by.index, x: victim.x, y: victim.y });
 }
 
 // 駒とボールの衝突。マグネットも吸着も無し、素直な反発だけ。
@@ -422,8 +417,21 @@ function resolveUnitBall(s, heat, dt) {
       b.vy += j * ny;
       limitSpeed(b, CONFIG.ball.maxSpeed * heat);
 
-      // 接触の「入り」だけをイベントにする。押し続けている間は鳴らさない。
-      if (!u.contact) {
+      // 「蹴った」= 踏み込みでボールを叩いた、ということにする。
+      // 専用のキック動作は無いので、判定はここ（衝突の解決）にしか置けない。
+      // 走って触れただけ（ドリブル）や、飛んできた球が当たっただけは含めない。
+      // 含めてしまうと、守備に当たった失点がすべてオウンゴール扱いになる。
+      const kicking = u.dashT > 0 && (u.vx * nx + u.vy * ny) > 0;
+      if (kicking && !u.dashHit) {
+        u.dashHit = true;      // 1回の踏み込みでイベントは1回
+        emit(s, {
+          type: 'kick',
+          unit: u.index, team: u.team,
+          x: b.x, y: b.y, dx: nx, dy: ny,
+          power: clamp(Math.hypot(b.vx, b.vy) / CONFIG.ball.maxSpeed, 0, 1),
+        });
+      } else if (!kicking && !u.contact) {
+        // 接触の「入り」だけをイベントにする。押し続けている間は鳴らさない。
         emit(s, {
           type: 'touch',
           unit: u.index, team: u.team,
@@ -431,7 +439,7 @@ function resolveUnitBall(s, heat, dt) {
           strength: clamp(Math.abs(vn) / (420 * V), 0, 1),
         });
       }
-      registerTouch(s, u, false);
+      registerTouch(s, u, kicking);
     }
     u.contact = true;
   }

@@ -323,12 +323,11 @@ function drawGoals(ctx, s) {
 // ---------------------------------------------------------------- entities
 
 function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
+  const r = CONFIG.unit.radius;
+
   for (const u of s.units) {
     const color = colorOf(u.team);
-    // 蹴った瞬間だけ一瞬ふくらむ。ボールを弾き出したのはこの反発、という見せ方。
-    // 立ち上がりは即座、戻りは平方根でゆっくり抜ける。
-    const pop = u.kickT > 0 ? Math.sqrt(u.kickT / CONFIG.kick.popTime) : 0;
-    const r = CONFIG.unit.radius * (1 + CONFIG.kick.pop * pop);
+    const stunned = u.stunT > 0;
 
     // 盤面から数ミリ浮かせるだけのソフトシャドウ
     ctx.save();
@@ -349,7 +348,7 @@ function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
     ctx.stroke();
 
     // 担当ピップ（左=1点 / 右=2点）。どちらの親指の駒かを一瞬で。
-    if (u.team === mine) {
+    if (u.team === mine && !stunned) {
       ctx.fillStyle = 'rgba(255,255,255,0.62)';
       const n = (screenOrder.indexOf(u) >= 0 ? screenOrder.indexOf(u) : u.side) + 1;
       for (let i = 0; i < n; i++) {
@@ -358,6 +357,23 @@ function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
         ctx.arc(u.x + ox, u.y, r * 0.15, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    // 体当たりを食らって動けない印。表面に ✕ を重ねる。
+    // 最後の少しだけ薄くして、いきなり消えないようにする。
+    if (stunned) {
+      const a = Math.min(1, u.stunT / (CONFIG.unit.stunTime * 0.25));
+      const q = r * 0.5;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = r * 0.19;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(u.x - q, u.y - q); ctx.lineTo(u.x + q, u.y + q);
+      ctx.moveTo(u.x + q, u.y - q); ctx.lineTo(u.x - q, u.y + q);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // クールダウンアーク

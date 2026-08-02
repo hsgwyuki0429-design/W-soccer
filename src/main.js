@@ -196,6 +196,16 @@ function handleEvents(events) {
         FX.ripple(fx, e.x, e.y, 'rgba(255,255,255,0.9)', 18);
         break;
 
+      case 'stun': {
+        // 潰した側にも潰された側にも、同じ手応えを返す。
+        audio.wall(0.95);
+        FX.ripple(fx, e.x, e.y, colorOf(e.team), 34);
+        FX.burst(fx, e.x, e.y, 0, 0, '#ffffff', 8, 170);
+        FX.shake(fx, 0.22);
+        if (e.team === myTeam()) buzz([18, 30, 18]);
+        break;
+      }
+
       case 'nudge':
         FX.ripple(fx, e.x, e.y, 'rgba(255,255,255,0.7)', 30);
         break;

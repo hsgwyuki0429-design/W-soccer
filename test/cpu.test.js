@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
-import { cpuProfile, normalizeCpuLevel } from '../src/cpu.js';
+import { cpuProfile, normalizeCpuLevel, cpuTeamSize } from '../src/cpu.js';
 import { createBot, updateBot } from '../src/bot.js';
 import { createState, step, PHASE } from '../src/game.js';
 
@@ -54,7 +54,7 @@ test('CPUの判断は試合状態と共通設定を書き換えず、有限で�
   seedRandom(t);
   const config = structuredClone(CONFIG);
   for (let level = 1; level <= 100; level++) {
-    const s = createState();
+    const s = createState(cpuTeamSize(level));
     const bots = [createBot(0, level), createBot(1, level)];
     for (let tick = 0; tick < 360; tick++) {
       const intents = [];
@@ -107,7 +107,12 @@ test('高レベルは中央を守る相手から離れたシュートコース�
     mate.x = 100; mate.y = 100;
     const bot = createBot(1, level);
     updateBot(bot, s, [], DT);
-    const shot = bot.plans.get(me.index).options.find((o) => o.reason === 'shoot');
+    const plan = bot.plans.get(me.index);
+    const shot = plan.options?.find((o) => o.reason === 'shoot');
+    if (plan.target) {
+      assert.equal(plan.target.reason, 'shoot');
+      return (plan.target.x - s.ball.x) / Math.hypot(plan.target.x - s.ball.x, plan.target.y - s.ball.y);
+    }
     assert.ok(shot);
     return shot.x;
   }

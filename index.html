@@ -38,7 +38,7 @@
 
       <div id="overlay">
         <div id="overlay-card" class="glass">
-          <div id="ov-kicker">2対2サッカー</div>
+          <div id="ov-kicker">2対2 / 2対3サッカー</div>
           <h1 id="ov-title">PAIR&nbsp;KICK</h1>
           <p id="ov-body">2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。</p>
           <div id="ov-opponents" role="group" aria-label="対戦相手">
@@ -48,7 +48,8 @@
           <div id="ov-cpu">
             <label for="cpu-level">CPUレベル（1〜100）</label>
             <input id="cpu-level" type="number" min="1" max="100" step="1" value="3" inputmode="numeric" aria-describedby="cpu-help" />
-            <p id="cpu-help">Lv.3が従来の強さの目安。<br>速さ・大きさ・威力は共通。<br>高レベルほど判断が正確に。</p>
+            <p id="cpu-summary" aria-live="polite">自分2人 対 CPU2人</p>
+            <p id="cpu-help">Lv.80から相手は3人。<br>Lv.100は先読みと連携の神級。<br>速さ・大きさ・威力は共通。</p>
           </div>
           <div id="ov-hints">
             <div class="hint"><b>倒す</b><span>移動</span></div>

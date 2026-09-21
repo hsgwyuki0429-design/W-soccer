@@ -10,6 +10,7 @@
 
 import { CONFIG, TEAM_BOT } from './config.js';
 import { cpuProfile } from './cpu.js';
+import { updateExpertBot } from './expert-bot.js';
 import { PHASE, goalMouth } from './game.js';
 
 const F = CONFIG.field;
@@ -43,6 +44,7 @@ export function createBot(team = TEAM_BOT, level) {
  * @param {number} dt
  */
 export function updateBot(bot, s, intents, dt) {
+  if (bot.profile.expert > 0) return updateExpertBot(bot, s, intents, dt);
   const B = bot.profile;
   const mine = s.units.filter((u) => u.team === bot.team);
 

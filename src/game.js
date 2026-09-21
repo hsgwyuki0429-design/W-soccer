@@ -69,7 +69,7 @@ function makeUnit(index, team, x, y) {
   };
 }
 
-export function createState() {
+export function createState(cpuCount = 2) {
   const s = {
     time: 0,
     phase: PHASE.KICKOFF,
@@ -95,11 +95,14 @@ export function createState() {
     wallCool: 0,
     events: [],
   };
+  if (cpuCount === 3) s.units.push(makeUnit(4, TEAM_BOT, F.w / 2, 120 * S));
   placeKickoff(s, TEAM_PLAYER);
   return s;
 }
 
-export function restart(s) {
+export function restart(s, cpuCount = s.units.filter((u) => u.team === TEAM_BOT).length) {
+  // 人間は常に0/1、CPUは2/3（高難度のみ4）。対人戦へ戻るときもここで4体に戻す。
+  s.units = createState(cpuCount).units;
   s.score[0] = 0;
   s.score[1] = 0;
   s.winner = -1;
@@ -118,7 +121,9 @@ function placeKickoff(s, possess) {
   for (const u of s.units) {
     // team0 の自陣は下（y 大）、team1 は上
     const own = u.team === TEAM_PLAYER ? 1 : -1;
-    u.x = u.side === 0 ? F.w / 3 : F.w * 2 / 3;   // コート幅に対する比で置く
+    const team = s.units.filter((mate) => mate.team === u.team);
+    u.x = team.length === 3 ? F.w * (team.indexOf(u) + 1) / 4
+      : u.side === 0 ? F.w / 3 : F.w * 2 / 3;
     u.y = cy + own * (u.team === possess ? 65 : 190) * S;   // 設計値(450x800基準)なので S 倍
     u.vx = u.vy = 0;
     u.cooldown = 0;

@@ -175,6 +175,31 @@ html, body {
 }
 #overlay.hidden { opacity: 0; pointer-events: none; }
 
+#ov-cpu { margin: calc(var(--u) * 14) 0; }
+#ov-cpu[hidden], #cpu-tag[hidden] { display: none; }
+#ov-cpu label { display: block; font-size: max(12px, calc(var(--u) * 12)); }
+#cpu-level {
+  width: max(76px, calc(var(--u) * 76));
+  margin-top: calc(var(--u) * 6);
+  padding: calc(var(--u) * 6);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--u) * 8);
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  font: inherit;
+  font-size: max(16px, calc(var(--u) * 14));
+  touch-action: manipulation;
+}
+#cpu-help { font-size: max(11px, calc(var(--u) * 10)); line-height: 1.6; opacity: 0.65; margin-bottom: 0; }
+#cpu-tag {
+  position: absolute;
+  right: calc(var(--u) * 10);
+  top: calc(var(--u) * 8);
+  font-size: calc(var(--u) * 11);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 #overlay-card {
   width: calc(var(--u) * 336);
   padding: calc(var(--u) * 30) calc(var(--u) * 26) calc(var(--u) * 24);

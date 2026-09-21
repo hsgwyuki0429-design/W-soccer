@@ -132,7 +132,6 @@ export const CONFIG = {
   },
 
   bot: {
-    speedMultiplier: 0.9,
     rethinkMs: 120 / PACE,   // 反応の遅れも引き伸ばす。据え置くと遅い試合ほどボットが鋭くなる
     noise: 0.15,
     shootRange: w(240),
@@ -155,6 +154,15 @@ export const CONFIG = {
     orbitEnter: 2.1,         // 回り込み半径のこの倍率より近いときだけ回る
     orbitSettle: 0.45,       // rad。これ以内なら回らずまっすぐ裏へ
     orbitStep: 1.0,          // rad。1回の目標で回る角度の上限
+  },
+
+  cpu: {
+    min: 1, max: 100, defaultLevel: 3,
+    // Lv.3 の判断は bot の値。移動性能は全員で unit / dash / kick を使う。
+    easy: { rethinkMs: 400 / PACE, noise: 0.4, aimSlack: 0.28,
+      aimSlackGrow: 1.2, aimSlackStretch: 2.5, aimSlackMax: 0.9, tackleChance: 0.12 },
+    elite: { rethinkMs: 30 / PACE, noise: 0.006, aimSlack: 0.05,
+      aimSlackGrow: 0.15, aimSlackStretch: 1.2, aimSlackMax: 0.28, tackleChance: 0.45 },
   },
 
   match: {

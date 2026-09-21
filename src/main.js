@@ -30,7 +30,7 @@ const colorOf = (team) => renderer.teamColor(team);
 
 const net = createNet();
 const state = createState();
-const bot = createBot();
+let bot = createBot();
 const intents = [null, null, null, null];
 
 const input = createInput(canvas, {
@@ -60,6 +60,7 @@ function onPrimary() {
   audio.unlock();
 
   if (ui.opponent === 'human') {
+    ui.setCpuMatch(null);
     if (net.status === 'playing') {
       // 試合中に開いた結果画面から。決着していれば再戦を頼む
       if (state.phase === PHASE.OVER) net.restart();
@@ -75,6 +76,8 @@ function onPrimary() {
   }
 
   // ボット戦
+  bot = createBot(undefined, ui.cpuLevel);
+  ui.setCpuMatch(bot.profile.level);
   if (versus) leaveVersus();
   if (state.phase === PHASE.OVER) {
     restart(state);

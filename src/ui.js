@@ -1,7 +1,7 @@
 // ui.js — DOM オーバーレイ（HUD / バナー / タイトル / リザルト）。
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
-import { normalizeCpuLevel } from './cpu.js';
+import { normalizeCpuLevel, cpuTeamSize } from './cpu.js';
 
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
@@ -25,12 +25,20 @@ export function createUI(onPrimary, onCancel = () => {}) {
   const ovCpu = el('ov-cpu');
   const cpuInput = el('cpu-level');
   const cpuTag = el('cpu-tag');
+  const cpuSummary = el('cpu-summary');
   let cpuLevel = normalizeCpuLevel();
   try { cpuLevel = normalizeCpuLevel(localStorage.getItem(CPU_KEY)); } catch (_) {}
   cpuInput.value = cpuLevel;
+  function paintCpuSummary() {
+    const level = normalizeCpuLevel(cpuInput.value);
+    cpuSummary.textContent = level === 100 ? 'Lv.100 神級 · 自分2人 対 CPU3人'
+      : `自分2人 対 CPU${cpuTeamSize(level)}人${level >= 80 ? ' · 超高難度' : ''}`;
+  }
+  paintCpuSummary();
   function saveCpuLevel() {
     cpuLevel = normalizeCpuLevel(cpuInput.value);
     cpuInput.value = cpuLevel;
+    paintCpuSummary();
     try { localStorage.setItem(CPU_KEY, String(cpuLevel)); } catch (_) {}
     return cpuLevel;
   }
@@ -38,6 +46,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
   ovCpu.addEventListener('pointerdown', (e) => e.stopPropagation());
   ovCpu.addEventListener('click', (e) => e.stopPropagation());
   cpuInput.addEventListener('change', saveCpuLevel);
+  cpuInput.addEventListener('input', paintCpuSummary);
 
   let opponent = 'bot';
   try { opponent = localStorage.getItem(OPP_KEY) || 'bot'; } catch (_) {}
@@ -91,7 +100,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
 
     setCpuMatch(level) {
       cpuTag.hidden = level == null;
-      cpuTag.textContent = level == null ? '' : 'CPU Lv.' + normalizeCpuLevel(level);
+      cpuTag.textContent = level == null ? '' : `CPU Lv.${normalizeCpuLevel(level)} · 2対${cpuTeamSize(level)}${normalizeCpuLevel(level) === 100 ? ' · 神級' : ''}`;
     },
 
     setUnit(u, hudBand) {
@@ -142,7 +151,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
     showTitle() {
       paintOpp();
       cpuTag.hidden = true;
-      ovKicker.textContent = '2対2サッカー';
+      ovKicker.textContent = '2対2 / 2対3サッカー';
       ovTitle.textContent = 'PAIR KICK';
       ovTitle.className = '';
       ovBody.innerHTML = '2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。';

@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v2-cpu-levels';
+const VERSION = 'pairkick-v3-elite-cpu';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   './src/game.js',
   './src/bot.js',
   './src/cpu.js',
+  './src/expert-bot.js',
   './src/input.js',
   './src/render.js',
   './src/effects.js',

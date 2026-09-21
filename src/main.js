@@ -4,6 +4,7 @@
 import { CONFIG, TEAM_PLAYER } from './config.js';
 import { createState, restart, step, PHASE, heatRatio, isMatchPoint } from './game.js';
 import { createBot, updateBot } from './bot.js';
+import { cpuTeamSize } from './cpu.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
@@ -79,10 +80,10 @@ function onPrimary() {
   bot = createBot(undefined, ui.cpuLevel);
   ui.setCpuMatch(bot.profile.level);
   if (versus) leaveVersus();
-  if (state.phase === PHASE.OVER) {
-    restart(state);
-    FX.clearEffects(fx);
-  }
+  restart(state, cpuTeamSize(bot.profile.level));
+  intents.length = state.units.length;
+  intents.fill(null);
+  FX.clearEffects(fx);
   ui.hideOverlay();
   input.reset();
   snapCamera = true;
@@ -94,7 +95,7 @@ function leaveVersus() {
   versus = false;
   net.disconnect();
   renderer.setViewpoint(0);
-  restart(state);
+  restart(state, 2);
   FX.clearEffects(fx);
 }
 
@@ -116,7 +117,7 @@ net.on('status', (st) => {
   if (st === 'playing') {
     versus = true;
     renderer.setViewpoint(net.myTeam);
-    restart(state);
+    restart(state, 2);
     FX.clearEffects(fx);
     input.reset();
     ui.hideOverlay();
@@ -306,7 +307,7 @@ function tick(dt) {
     slot[order[1].index - base] = netIntents[1];
     net.sendIntents(slot[0], slot[1]);
   } else {
-    intents[0] = intents[1] = null;
+    intents.fill(null);
     intents[order[0].index] = netIntents[0];
     intents[order[1].index] = netIntents[1];
     updateBot(bot, state, intents, dt);

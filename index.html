@@ -29,6 +29,8 @@
         <span class="dot dot-b"></span>
       </div></div>
 
+      <div id="cpu-tag" hidden></div>
+
       <div id="banner"><div id="banner-in" class="glass banner-card">
         <div id="banner-title">READY</div>
         <div id="banner-sub"></div>
@@ -42,6 +44,11 @@
           <div id="ov-opponents" role="group" aria-label="対戦相手">
             <button class="seg" data-opp="bot">ボット</button>
             <button class="seg" data-opp="human">対人戦</button>
+          </div>
+          <div id="ov-cpu">
+            <label for="cpu-level">CPUレベル（1〜100）</label>
+            <input id="cpu-level" type="number" min="1" max="100" step="1" value="3" inputmode="numeric" aria-describedby="cpu-help" />
+            <p id="cpu-help">Lv.3が従来の強さの目安。<br>速さ・大きさ・威力は共通。<br>高レベルほど判断が正確に。</p>
           </div>
           <div id="ov-hints">
             <div class="hint"><b>倒す</b><span>移動</span></div>

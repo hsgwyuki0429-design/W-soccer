@@ -1,6 +1,9 @@
 // ui.js — DOM オーバーレイ（HUD / バナー / タイトル / リザルト）。
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
+import { normalizeCpuLevel } from './cpu.js';
+
+const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
 
 export function createUI(onPrimary, onCancel = () => {}) {
@@ -19,12 +22,29 @@ export function createUI(onPrimary, onCancel = () => {}) {
   const ovHints = el('ov-hints');
   const ovBtn = el('ov-btn');
   const ovOpps = el('ov-opponents');
+  const ovCpu = el('ov-cpu');
+  const cpuInput = el('cpu-level');
+  const cpuTag = el('cpu-tag');
+  let cpuLevel = normalizeCpuLevel();
+  try { cpuLevel = normalizeCpuLevel(localStorage.getItem(CPU_KEY)); } catch (_) {}
+  cpuInput.value = cpuLevel;
+  function saveCpuLevel() {
+    cpuLevel = normalizeCpuLevel(cpuInput.value);
+    cpuInput.value = cpuLevel;
+    try { localStorage.setItem(CPU_KEY, String(cpuLevel)); } catch (_) {}
+    return cpuLevel;
+  }
+  // 入力欄を触っても「カード全体タップで開始」へ伝わらないようにする。
+  ovCpu.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovCpu.addEventListener('click', (e) => e.stopPropagation());
+  cpuInput.addEventListener('change', saveCpuLevel);
 
   let opponent = 'bot';
   try { opponent = localStorage.getItem(OPP_KEY) || 'bot'; } catch (_) {}
   if (opponent !== 'bot' && opponent !== 'human') opponent = 'bot';
 
   function paintOpp() {
+    ovCpu.hidden = opponent !== 'bot';
     for (const b of ovOpps.querySelectorAll('.seg')) {
       b.classList.toggle('on', b.dataset.opp === opponent);
     }
@@ -67,6 +87,12 @@ export function createUI(onPrimary, onCancel = () => {}) {
 
   return {
     get opponent() { return opponent; },
+    get cpuLevel() { return saveCpuLevel(); },
+
+    setCpuMatch(level) {
+      cpuTag.hidden = level == null;
+      cpuTag.textContent = level == null ? '' : 'CPU Lv.' + normalizeCpuLevel(level);
+    },
 
     setUnit(u, hudBand) {
       const root = document.documentElement.style;
@@ -114,6 +140,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
     },
 
     showTitle() {
+      paintOpp();
+      cpuTag.hidden = true;
       ovKicker.textContent = '2対2サッカー';
       ovTitle.textContent = 'PAIR KICK';
       ovTitle.className = '';
@@ -129,6 +157,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
     /** 対人戦の相手待ち */
     showWaiting() {
       ovKicker.textContent = '対人戦';
+      ovCpu.hidden = true;
+      cpuTag.hidden = true;
       ovTitle.textContent = '相手を待っています';
       ovTitle.className = 'waiting';
       ovBody.innerHTML = 'この画面のURLを相手に渡してください。<br>2人そろうと自動で始まります。';
@@ -150,6 +180,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
      *   誤解を招く（実際に起きた不具合報告はこれだった）。
      */
     showNetError(text, everConnected = true) {
+      paintOpp();
       ovKicker.textContent = '対人戦';
       ovTitle.textContent = everConnected ? '接続が切れました' : '接続できませんでした';
       ovTitle.className = 'lose';
@@ -163,6 +194,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
     },
 
     showResult(win, a, b) {
+      paintOpp();
       waitingCancel = false;
       ovOpps.style.display = '';
       ovKicker.textContent = `${a} — ${b}`;

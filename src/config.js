@@ -106,11 +106,16 @@ export const CONFIG = {
   stick: {
     maxRadius: 60,      // CSS px
     knobRadius: 25,     // CSS px
-    // 指を離さずに素早く動かす（はじく）と突進。直近 flickWindowMs の移動が
-    // flickDist 以上、かつ flickSpeed 以上の速さなら撃つ。ふつうの舵取りでは出ない速さにする。
+    // 指を素早く動かす（はじく）と突進。押さえたままでも、はじきながら離しても出る。
+    // 直近 flickWindowMs の移動が flickDist 以上、かつ flickSpeed 以上の速さなら撃つ。
+    // ふつうの舵取り（ゆっくり倒す・円を描く・ふつうの速さの切り返し）では出ない速さにする。
     flickWindowMs: 60,  // ms
-    flickDist: 22,      // CSS px
-    flickSpeed: 1100,   // CSS px/s
+    flickDist: 14,      // CSS px（初版 22 は重かった）
+    // CSS px/s（初版 1100 は重かった）。スティックの端から端への切り返しを
+    // 0.25秒より速くやると突進になる（初版は0.15秒）。軽さと暴発のかね合い。
+    flickSpeed: 700,
+    // 離したとき、最後に指が動いてからこれ以上経っていたら「止めてから離した」とみなし撃たない
+    releaseRestMs: 100, // ms
     // 1回撃ったら、指がこれより遅くなるか rearmIdleMs 止まるまで次は撃たない（連発しない）
     rearmSpeed: 350,    // CSS px/s
     rearmIdleMs: 80,    // ms

@@ -429,11 +429,22 @@ function resolveUnitBall(s, heat, dt) {
       const kicking = u.dashT > 0 && (u.vx * nx + u.vy * ny) > 0;
       if (kicking && !u.dashHit) {
         u.dashHit = true;      // 1回の踏み込みでイベントは1回
+        // 飛ぶ向きは踏み込んだ向き（＝駒が向いていた向き）。強さは当たり方で決まる
+        // （芯で当てるほど強く、かすめるほど弱い）。
+        // 体の置き方だけで狙わせると、ボールの真後ろへ回り込む手間が大きく、
+        // 狙った方へ蹴れない操作になっていた。
+        const k = kickDirection(u.dashX, u.dashY, nx, ny);
+        // 芯を外しても「蹴った」と分かる強さは出す（物理のままだと 60°ずれで ほぼ0）。
+        const square = clamp((u.dashX * nx + u.dashY * ny) / CONFIG.kick.fullDot, 0, 1);
+        const sp = Math.min(CONFIG.ball.maxSpeed * heat,
+          Math.max(Math.hypot(b.vx, b.vy), CONFIG.kick.speed * square));
+        b.vx = k.x * sp;
+        b.vy = k.y * sp;
         emit(s, {
           type: 'kick',
           unit: u.index, team: u.team,
-          x: b.x, y: b.y, dx: nx, dy: ny,
-          power: clamp(Math.hypot(b.vx, b.vy) / CONFIG.ball.maxSpeed, 0, 1),
+          x: b.x, y: b.y, dx: k.x, dy: k.y,
+          power: clamp(sp / CONFIG.ball.maxSpeed, 0, 1),
         });
       } else if (!kicking && !u.contact) {
         // 接触の「入り」だけをイベントにする。押し続けている間は鳴らさない。
@@ -451,6 +462,19 @@ function resolveUnitBall(s, heat, dt) {
 
   clampBall(b);
   unpinBall(s, dt);
+}
+
+/**
+ * キックで飛ぶ向き。基本は踏み込んだ向き (dx, dy)。
+ * ただし接触面 (nx, ny) に対して寝すぎた向き（真横へのかすり当たり）は
+ * 体の中へ向かうボールになりかねないので、面の向きへ寄せる。
+ */
+function kickDirection(dx, dy, nx, ny) {
+  // 面の向き n から見た、踏み込んだ向きの角度。これを ±maxAngle に収める。
+  const maxAngle = Math.acos(CONFIG.kick.minFaceDot);
+  const a = clamp(Math.atan2(nx * dy - ny * dx, nx * dx + ny * dy), -maxAngle, maxAngle);
+  const c = Math.cos(a), sn = Math.sin(a);
+  return { x: nx * c - ny * sn, y: nx * sn + ny * c };
 }
 
 function clampBall(b) {

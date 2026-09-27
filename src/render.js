@@ -519,14 +519,14 @@ function drawRipples(ctx, fx) {
 // ---------------------------------------------------------------- 操作の表示
 
 /**
- * 進行方向の矢印。動かしているあいだ、駒の前に短く太く半透明で出す。
+ * 向きの矢印。駒の前に短く太く半透明で出す。
  *
- * ボールがどこへ飛ぶかの予告ではない。キックは駒の中心 → ボールの向きへ
- * 飛ぶので、狙いは指の角度ではなく体の置き方で決まる。
- * この矢印が示すのは「今どっちへ進んでいるか」＝ そのまま離したときに
- * ダッシュする向きでもある。
+ * 示すのは「タップしたら踏み込む向き」＝ ボールに当たったら飛ぶ向き。
+ *   動かしているあいだ … スティックの向き（はっきり）
+ *   指を離しているあいだ … 駒が向いている方向（薄く。クールダウン中はさらに薄く）
  *
  * dirs は画面座標。盤面を180度回して見ている側では、ワールドの向きは逆になる。
+ * 駒の向き（faceX/faceY）はワールド座標なのでそのまま使う。
  */
 function drawMoveArrows(ctx, input, screenOrder, flip, colorOf) {
   const A = CONFIG.moveArrow;
@@ -536,15 +536,25 @@ function drawMoveArrows(ctx, input, screenOrder, flip, colorOf) {
   for (let side = 0; side < 2; side++) {
     const d = input.dirs && input.dirs[side];
     const u = screenOrder[side];
-    if (!d || !u) continue;
+    if (!u) continue;
+
+    let angle, alpha;
+    if (d) {
+      angle = Math.atan2(d.y * k, d.x * k);
+      alpha = A.alpha;
+    } else {
+      if (u.stunT > 0 || (u.faceX === 0 && u.faceY === 0)) continue;
+      angle = Math.atan2(u.faceY, u.faceX);
+      alpha = A.idleAlpha * (u.cooldown > 0 ? 0.45 : 1);
+    }
 
     const r0 = r + A.gap;
     const r1 = r0 + A.length;
 
     ctx.save();
     ctx.translate(u.x, u.y);
-    ctx.rotate(Math.atan2(d.y * k, d.x * k));
-    ctx.globalAlpha = A.alpha;
+    ctx.rotate(angle);
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = colorOf(u.team);
 
     // 軸と矢じりを一筆で。太く短く、輪郭は付けない。

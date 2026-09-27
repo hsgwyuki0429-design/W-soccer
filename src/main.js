@@ -116,6 +116,7 @@ net.on('status', (st) => {
   }
   if (st === 'playing') {
     versus = true;
+    acc = 0;
     renderer.setViewpoint(net.myTeam);
     restart(state, 2);
     FX.clearEffects(fx);
@@ -143,7 +144,15 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
-document.addEventListener('visibilitychange', () => { last = performance.now(); });
+document.addEventListener('visibilitychange', () => {
+  last = performance.now();
+  // 対人戦でタブを離れると入力が途切れ、サーバーは直前の移動を続ける。
+  // 走ったまま放置されないよう、離れる前に「止まる」を1つ送っておく。
+  if (document.hidden && versus && running) {
+    const still = () => ({ move: { x: 0, y: 0 }, flick: null });
+    net.tick(still(), still());
+  }
+});
 
 resize();
 ui.showTitle();
@@ -256,9 +265,21 @@ function frame(now) {
   input.update(dt);
 
   if (versus) {
-    // 試合はサーバーが進めている。ここは意図を送って、届いた状態を描くだけ。
-    if (running) tick(dt);
-    net.apply(state, now);
+    // 試合の正解はサーバーが持つ。手元では同じ固定ステップで先に進めて（予測）、
+    // 届いた状態で答え合わせをしたものを描く。
+    if (running) {
+      acc += dt;
+      let steps = 0;
+      while (acc >= STEP && steps < MAX_STEPS) {
+        acc -= STEP;
+        steps++;
+        tick(STEP);
+      }
+      if (steps === MAX_STEPS) acc = 0;
+    } else {
+      acc = 0;
+    }
+    net.apply(state, dt);
   } else if (running) {
     if (fx.hitstop > 0) {
       // ヒットストップ中は物理を止める。演出だけ進む。
@@ -305,7 +326,7 @@ function tick(dt) {
     const slot = [null, null];
     slot[order[0].index - base] = netIntents[0];
     slot[order[1].index - base] = netIntents[1];
-    net.sendIntents(slot[0], slot[1]);
+    net.tick(slot[0], slot[1]);
   } else {
     intents.fill(null);
     intents[order[0].index] = netIntents[0];

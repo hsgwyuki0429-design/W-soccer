@@ -4,11 +4,24 @@
 // 位置はサーバーが計算して配る。src/game.js をそのまま使う（純粋なので
 // Node でも同じものが動く）。これが「game.js をブラウザAPIから切り離す」
 // と決めた理由そのもの。
+//
+// クライアントは自分の入力で先に動かして（予測）、ここから届く状態で答え合わせをする。
+// そのために：
+//   - 入力には通し番号が付いてくる。1ステップにつき1つずつ順に使い、
+//     どこまで使ったか（ack）をスナップショットに載せて返す
+//   - スナップショットには step() が読む値をすべて載せる（再生できるように）
+//   - 相手の予測に使えるよう、各駒がいま受けている移動入力も載せる
 
 import { createState, step, restart, PHASE } from '../src/game.js';
+import { encodeState } from '../src/snapshot.js';
 
 const TICK = 1 / 60;
 const SNAPSHOT_HZ = 30;
+// 溜めておく入力の上限（ステップ数）。これを超えたぶんは古い順に捨てて、
+// 通信が詰まったあとに遅れを抱えたまま進むことがないようにする。
+const MAX_QUEUE = 4;
+// 異常に送りつけられても、抱える入力はここまで（古いものから捨てる）
+const HARD_QUEUE = 120;
 
 const waiting = [];        // 相手待ちのクライアント
 const rooms = new Set();
@@ -23,8 +36,11 @@ export function handleConnection(conn) {
     conn,
     room: null,
     team: -1,
-    // このクライアントが担当する2駒ぶんの意図
-    intents: [{ move: { x: 0, y: 0 }, flick: null }, { move: { x: 0, y: 0 }, flick: null }],
+    // 届いた入力（通し番号つき）。ステップごとに1つずつ使う
+    queue: [],
+    ack: 0,
+    // 入力が途切れたときに使い続ける、直近の移動入力（フリックは含めない）
+    last: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
   };
 
   conn.on('message', (text) => {
@@ -38,7 +54,7 @@ export function handleConnection(conn) {
       case 'restart':
         if (client.room && client.room.state.phase === PHASE.OVER) {
           restart(client.room.state);
-          client.room.pending.length = 0;
+          client.room.pending = [];
         }
         break;
       case 'leave': drop(client); break;
@@ -81,6 +97,11 @@ function makeRoom(a, b) {
   a.room = b.room = room;
   a.team = 0;
   b.team = 1;
+  for (const p of room.players) {
+    p.queue.length = 0;
+    p.ack = 0;
+    p.last[0].x = p.last[0].y = p.last[1].x = p.last[1].y = 0;
+  }
   rooms.add(room);
 
   for (const p of room.players) {
@@ -91,17 +112,45 @@ function makeRoom(a, b) {
 }
 
 function readIntents(client, msg) {
-  const put = (slot, arr) => {
-    const it = client.intents[slot];
-    if (!Array.isArray(arr)) { it.move.x = it.move.y = 0; it.flick = null; return; }
-    it.move.x = clamp1(arr[0]);
-    it.move.y = clamp1(arr[1]);
-    it.flick = (typeof arr[2] === 'number' && typeof arr[3] === 'number')
+  if (!client.room) return;
+  const n = Number(msg.n);
+  if (!Number.isInteger(n) || n <= client.ack) return;
+  const q = client.queue;
+  if (q.length && n <= q[q.length - 1].n) return;   // 古い・重複した入力
+  q.push({ n, a: readSlot(msg.a), b: readSlot(msg.b) });
+  if (q.length > HARD_QUEUE) q.splice(0, q.length - HARD_QUEUE);
+}
+
+function readSlot(arr) {
+  if (!Array.isArray(arr)) return { move: { x: 0, y: 0 }, flick: null };
+  return {
+    move: { x: clamp1(arr[0]), y: clamp1(arr[1]) },
+    flick: (typeof arr[2] === 'number' && typeof arr[3] === 'number')
       ? { x: clamp1(arr[2]), y: clamp1(arr[3]) }
-      : null;
+      : null,
   };
-  put(0, msg.a);
-  put(1, msg.b);
+}
+
+/** このステップで使う2駒ぶんの意図を取り出す。 */
+function takeIntents(p) {
+  const q = p.queue;
+  // 溜まりすぎていたら古いものを捨てて追いつく。フリックだけは捨てずに次へ引き継ぐ
+  // （踏み込みが消えると「押したのに出ない」になる）。
+  while (q.length > MAX_QUEUE) {
+    const old = q.shift();
+    if (old.a.flick && !q[0].a.flick) q[0].a.flick = old.a.flick;
+    if (old.b.flick && !q[0].b.flick) q[0].b.flick = old.b.flick;
+    p.ack = old.n;
+  }
+  const inp = q.shift();
+  if (!inp) {
+    // まだ届いていない。直前の移動を続ける（止めるとカクつく）
+    return [{ move: { ...p.last[0] }, flick: null }, { move: { ...p.last[1] }, flick: null }];
+  }
+  p.ack = inp.n;
+  p.last[0].x = inp.a.move.x; p.last[0].y = inp.a.move.y;
+  p.last[1].x = inp.b.move.x; p.last[1].y = inp.b.move.y;
+  return [inp.a, inp.b];
 }
 
 function clamp1(v) {
@@ -124,16 +173,12 @@ function tickRoom(room) {
 
     const intents = [null, null, null, null];
     for (const p of room.players) {
-      const base = p.team * 2;
-      for (let k = 0; k < 2; k++) {
-        const src = p.intents[k];
-        // ここで写しを作る。src をそのまま渡して直後に flick を消すと、
-        // 同じオブジェクトなので step が見る前に消える。
-        intents[base + k] = { move: { x: src.move.x, y: src.move.y }, flick: src.flick };
-        src.flick = null;   // フリックは1ステップだけ有効
-      }
+      const [a, b] = takeIntents(p);
+      intents[p.team * 2] = a;
+      intents[p.team * 2 + 1] = b;
     }
     for (let i = 0; i < 4; i++) if (!intents[i]) intents[i] = NO_INTENT;
+    room.moves = intents.map((it) => [r2(it.move.x), r2(it.move.y)]);
 
     const evs = step(room.state, intents, TICK);
     for (const e of evs) room.pending.push(e);
@@ -149,18 +194,14 @@ function tickRoom(room) {
 }
 
 function broadcast(room) {
-  const s = room.state;
+  const ack = [0, 0];
+  for (const p of room.players) ack[p.team] = p.ack;
   const snap = {
     t: 's',
     n: ++room.seq,
-    u: s.units.map((u) => [r1(u.x), r1(u.y), r1(u.vx), r1(u.vy), r2(u.cooldown), r2(u.dashT)]),
-    b: [r1(s.ball.x), r1(s.ball.y), r1(s.ball.vx), r1(s.ball.vy)],
-    ph: s.phase,
-    sc: s.score,
-    ko: s.kickoffTeam,
-    ht: r2(s.heatT),
-    ch: s.chain,
-    w: s.winner,
+    s: encodeState(room.state),
+    k: ack,
+    m: room.moves || [[0, 0], [0, 0], [0, 0], [0, 0]],
     ev: room.pending.length ? room.pending : undefined,
   };
   room.pending = [];
@@ -170,7 +211,6 @@ function broadcast(room) {
   }
 }
 
-const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;
 
 function drop(client) {

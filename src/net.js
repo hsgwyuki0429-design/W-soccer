@@ -21,6 +21,12 @@ import { decodeState, copyState } from './snapshot.js';
 const STEP = 1 / 60;
 const MAX_PENDING = 180;     // 未確認の入力をこれ以上は抱えない（3秒）
 const SMOOTH_RATE = 14;      // 答え合わせのずれを寄せる速さ（1/秒）
+const BALL_SMOOTH_RATE = 30; // ボールは速く、ぶつかる相手も多いので、ずれを長く引きずらない
+// ボールが駒にこの距離（接触距離からの余り）より近づいたら、ボールのずれを
+// その駒のずれに揃えていく。描いた位置をばらばらにずらしたまま接触すると
+// 「触れていないのに弾かれる／重なっているのに当たらない」に見える。
+// 接している瞬間は、駒とボールの位置関係が当たり判定のとおりに描かれる。
+const CONTACT_FADE = 3 * CONFIG.unit.radius;
 const TELEPORT = 150 * CONFIG.world.scale;   // これ以上ずれたら寄せずに飛ばす（キックオフの配置換えなど）
 
 const PING_MS = 1000;        // 往復時間を測る間隔
@@ -231,17 +237,35 @@ export function createNet() {
       }
 
       const k = Math.exp(-SMOOTH_RATE * dt);
+      const kb = Math.exp(-BALL_SMOOTH_RATE * dt);
+      for (const o of offsets.units) { o.x *= k; o.y *= k; }
+      const ob = offsets.ball;
+      ob.x *= kb; ob.y *= kb;
+
+      // いちばん近い駒の近さ（0 = 接している … 1 = 十分離れている）
+      const rr = CONFIG.unit.radius + CONFIG.ball.radius;
+      let near = -1, room = 1;
+      sim.units.forEach((u, i) => {
+        const r = clamp((Math.hypot(sim.ball.x - u.x, sim.ball.y - u.y) - rr) / CONTACT_FADE, 0, 1);
+        if (r < room) { room = r; near = i; }
+      });
+      if (near >= 0) {
+        const ou = offsets.units[near];
+        ob.x = ou.x + (ob.x - ou.x) * room;
+        ob.y = ou.y + (ob.y - ou.y) * room;
+      }
+
       copyState(state, sim);
       state.units.forEach((u, i) => {
         const o = offsets.units[i];
         if (!o) return;
-        o.x *= k; o.y *= k;
         u.x += o.x; u.y += o.y;
       });
-      offsets.ball.x *= k; offsets.ball.y *= k;
-      state.ball.x += offsets.ball.x;
-      state.ball.y += offsets.ball.y;
+      state.ball.x += ob.x;
+      state.ball.y += ob.y;
       return true;
     },
   };
 }
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }

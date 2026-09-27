@@ -33,6 +33,49 @@ test('スナップショットから復元した状態は、同じ入力で元�
   assert.deepEqual(a.score, b.score);
 });
 
+test('答え合わせでボールがずれても、駒に接している瞬間は当たり判定どおりの位置に描く', async () => {
+  // サーバー役を手で動かせる WebSocket
+  let sock = null;
+  class FakeSocket {
+    constructor() { sock = this; this.readyState = 1; }
+    send() {}
+    close() {}
+  }
+  const saved = globalThis.WebSocket;
+  globalThis.WebSocket = FakeSocket;
+  globalThis.location ??= { protocol: 'http:', host: 'localhost' };
+  const { createNet } = await import('../src/net.js');
+  const net = createNet();
+  try {
+    net.connect();
+    sock.onopen();
+    const deliver = (m) => sock.onmessage({ data: JSON.stringify(m) });
+    deliver({ t: 'start', team: 0 });
+
+    const rr = CONFIG.unit.radius + CONFIG.ball.radius;
+    const s = createState();
+    s.phase = PHASE.PLAY;
+    const u = s.units[0];
+    u.x = 400 * S; u.y = 500 * S;
+    s.ball.x = u.x; s.ball.y = u.y - 90 * S;   // 駒から離れている
+    const view = createState();
+    deliver({ t: 's', n: 1, s: encodeState(s), k: [0, 0], m: [[0, 0], [0, 0], [0, 0], [0, 0]] });
+    net.apply(view, DT);
+
+    // サーバーの答え：実はボールはもう駒に接していた（見えている位置から大きくずれる）
+    s.ball.x = u.x; s.ball.y = u.y - rr;
+    deliver({ t: 's', n: 2, s: encodeState(s), k: [0, 0], m: [[0, 0], [0, 0], [0, 0], [0, 0]] });
+    net.apply(view, DT);
+
+    const vu = view.units[0], vb = view.ball;
+    const gap = Math.hypot(vb.x - vu.x, vb.y - vu.y) - rr;
+    assert.ok(Math.abs(gap) < 0.5, `描いた駒とボールの隙間 ${gap}`);
+  } finally {
+    net.disconnect();
+    globalThis.WebSocket = saved;
+  }
+});
+
 // ---------------------------------------------------------------- 通信を挟んだ試験
 
 const LATENCY_MS = 80;   // 片道。往復 160ms の回線を想定

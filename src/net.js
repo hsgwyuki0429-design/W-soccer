@@ -23,6 +23,8 @@ const MAX_PENDING = 180;     // 未確認の入力をこれ以上は抱えない
 const SMOOTH_RATE = 14;      // 答え合わせのずれを寄せる速さ（1/秒）
 const TELEPORT = 150 * CONFIG.world.scale;   // これ以上ずれたら寄せずに飛ばす（キックオフの配置換えなど）
 
+const PING_MS = 1000;        // 往復時間を測る間隔
+
 const SERVER_ONLY = new Set(['goal', 'kickoff', 'matchend']);
 
 export function createNet() {
@@ -38,6 +40,8 @@ export function createNet() {
   let moves = [[0, 0], [0, 0], [0, 0], [0, 0]];   // 各駒がいま受けている移動入力
   let serverEvents = [];
   const offsets = { units: sim.units.map(() => ({ x: 0, y: 0 })), ball: { x: 0, y: 0 } };
+  let rtt = -1;                       // 通信の往復時間（ms）。未計測は -1
+  let pingTimer = null;
 
   const mine = (unitIndex) => (unitIndex >> 1) === myTeam;
 
@@ -66,6 +70,7 @@ export function createNet() {
     latest = null;
     moves = [[0, 0], [0, 0], [0, 0], [0, 0]];
     serverEvents = [];
+    rtt = -1;
     for (const o of offsets.units) o.x = o.y = 0;
     offsets.ball.x = offsets.ball.y = 0;
   }
@@ -118,6 +123,8 @@ export function createNet() {
     get status() { return status; },
     get myTeam() { return myTeam; },
     get pending() { return pending.length; },
+    /** 通信の往復時間（ms）。まだ測れていなければ -1 */
+    get rtt() { return rtt; },
     on(kind, fn) { listeners[kind].push(fn); },
 
     connect() {
@@ -130,9 +137,22 @@ export function createNet() {
         setStatus('error');
         return;
       }
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'join' }));
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ t: 'join' }));
+        const ping = () => {
+          if (ws && ws.readyState === 1) {
+            try { ws.send(JSON.stringify({ t: 'p', c: performance.now() })); } catch (_) {}
+          }
+        };
+        ping();
+        clearInterval(pingTimer);
+        pingTimer = setInterval(ping, PING_MS);
+      };
       ws.onerror = () => { if (status !== 'playing') setStatus('error'); };
-      ws.onclose = () => { if (status === 'playing' || status === 'waiting') setStatus('gone'); };
+      ws.onclose = () => {
+        clearInterval(pingTimer);
+        if (status === 'playing' || status === 'waiting') setStatus('gone');
+      };
       ws.onmessage = (e) => {
         let m;
         try { m = JSON.parse(e.data); } catch (_) { return; }
@@ -144,6 +164,11 @@ export function createNet() {
             setStatus('playing', { team: myTeam });
             break;
           case 'gone': setStatus('gone'); break;
+          case 'P': {
+            const r = performance.now() - Number(m.c);
+            if (r >= 0 && r < 10000) rtt = rtt < 0 ? r : rtt * 0.7 + r * 0.3;
+            break;
+          }
           case 's':
             if (!m.s || !Array.isArray(m.s.u)) break;
             latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
@@ -154,6 +179,7 @@ export function createNet() {
     },
 
     disconnect() {
+      clearInterval(pingTimer);
       if (ws) {
         try { ws.send(JSON.stringify({ t: 'leave' })); } catch (_) {}
         try { ws.close(); } catch (_) {}

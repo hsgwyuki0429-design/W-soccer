@@ -55,6 +55,9 @@ class Conn {
     }, 20000);
   }
 
+  /** 送信待ちのバイト数（回線が詰まっているかの目安） */
+  get buffered() { return this.socket.writableLength || 0; }
+
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); return this; }
   emit(ev, ...a) { for (const fn of this.handlers[ev] || []) fn(...a); }
 

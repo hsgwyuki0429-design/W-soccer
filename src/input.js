@@ -6,13 +6,14 @@
 //              進行方向は「置いた地点 → 今の指」。離しても何も起きない（止まるだけ）。
 //   はじく   … 指を素早く動かすと、その向きへ突進（キック / ダッシュ / 体当たり）。
 //              ボールに当たればはじいた向きへ飛ぶ（game.js を参照）。
-//              指は離さないので、突進のあとも移動がそのまま続く。
+//              押さえたままでも、はじきながら離しても出る。押さえたままなら
+//              突進のあとも移動がそのまま続く。止めてから離したときは何も起きない。
 //
 // 指がスティックの外へ出たら、支点が指についてくる。はじいたあと指が遠くへ
 // 行っても、そのまま同じ向きへ走り続け、戻すときも大きく戻さなくてよい。
 //
-// 以前の「動かしながら離すと撃つ」はやめた。撃つたびに指を離すので
-// 移動が途切れ、止まろうとして離しただけで暴発することもあったため。
+// 以前の「動かしながら離すと撃つ（速さは問わない）」は、止まろうとして離しただけで
+// 暴発したのでやめた。離すときも、押さえたままのはじきと同じ速さが要る。
 //
 // 座標はすべて画面座標(CSS px)。カメラが動いても指の下から動かない。
 // 担当（左半分＝左の駒）も画面基準。コート上の左右ではない。
@@ -34,6 +35,30 @@ export function createFlickDetector(cfg = S) {
   let samples = [];
   let armed = true;
 
+  /**
+   * (x, y, t) で終わる区間のうち、速く・十分に動いたものを探す。
+   * 窓の中の各点から見る。窓全体の平均だけを見ると、窓より短い鋭いはじきが薄まって取りこぼす。
+   * 向きは、条件を満たす区間のうち最も長いもので取る（短い区間は向きが暴れる）。
+   * move の間隔が窓より長いときは、ひとつ前の点だけを見る。
+   * @param {number} end samples のうち (x, y, t) の直前までを使う（その位置は含めない）
+   */
+  function evaluate(x, y, t, end) {
+    let best = null, fastest = 0;
+    for (let i = end - 1; i >= 0; i--) {
+      const a = samples[i];
+      const age = t - a.t;
+      if (age > cfg.flickWindowMs && !(i === end - 1 && age <= cfg.flickWindowMs * 2)) break;
+      const dx = x - a.x, dy = y - a.y;
+      const dist = Math.hypot(dx, dy);
+      const speed = dist / Math.max(age, 8) * 1000;   // px/s
+      fastest = Math.max(fastest, speed);
+      if (dist >= cfg.flickDist && speed >= cfg.flickSpeed) best = { dx, dy, dist };
+    }
+    return { best, fastest };
+  }
+
+  const dir = (b) => ({ x: b.dx / b.dist, y: b.dy / b.dist });
+
   return {
     get armed() { return armed; },
 
@@ -42,26 +67,11 @@ export function createFlickDetector(cfg = S) {
       armed = true;
     },
 
-    /** @returns {{x:number,y:number}|null} はじいた向き（画面座標・長さ1） */
+    /** 押さえている間の指の位置。@returns {{x:number,y:number}|null} はじいた向き（画面座標・長さ1） */
     feed(x, y, t) {
       samples.push({ x, y, t });
       while (samples.length > 2 && t - samples[0].t > cfg.flickWindowMs * 3) samples.shift();
-
-      // 窓の中の各点から今までを見て、速く・十分に動いた区間があれば撃つ。
-      // 窓全体の平均だけを見ると、窓より短い鋭いはじきが薄まって取りこぼす。
-      // 向きは、条件を満たす区間のうち最も長いもので取る（短い区間は向きが暴れる）。
-      // move の間隔が窓より長いときは、ひとつ前の点だけを見る。
-      let best = null, fastest = 0;
-      for (let i = samples.length - 2; i >= 0; i--) {
-        const a = samples[i];
-        const age = t - a.t;
-        if (age > cfg.flickWindowMs && !(i === samples.length - 2 && age <= cfg.flickWindowMs * 2)) break;
-        const dx = x - a.x, dy = y - a.y;
-        const dist = Math.hypot(dx, dy);
-        const speed = dist / Math.max(age, 8) * 1000;   // px/s
-        fastest = Math.max(fastest, speed);
-        if (dist >= cfg.flickDist && speed >= cfg.flickSpeed) best = { dx, dy, dist };
-      }
+      const { best, fastest } = evaluate(x, y, t, samples.length - 1);
 
       if (!armed) {
         if (fastest < cfg.rearmSpeed) armed = true;
@@ -69,9 +79,30 @@ export function createFlickDetector(cfg = S) {
       }
       if (best) {
         armed = false;
-        return { x: best.dx / best.dist, y: best.dy / best.dist };
+        return dir(best);
       }
       return null;
+    },
+
+    /**
+     * 指を離したとき。はじきながら離した（離す直前まで指が速く動いていた）なら撃つ。
+     * 止めてから離したとき、押さえている間にもう撃っていたときは撃たない。
+     *
+     * pointerup は直前の move と同じ座標で、しかも数十ms遅れて届くことがある。
+     * それを「止まっていた時間」として速さに混ぜると、はじいて離したのに出ない。
+     * そこで離した位置が動いていなければ、最後に動いた時点で見る。
+     */
+    release(x, y, t) {
+      if (!armed || !samples.length) return null;
+      const last = samples[samples.length - 1];
+      if (Math.hypot(x - last.x, y - last.y) >= 1) {
+        samples.push({ x, y, t });
+        const { best } = evaluate(x, y, t, samples.length - 1);
+        return best ? dir(best) : null;
+      }
+      if (t - last.t > cfg.releaseRestMs) return null;   // 止めてから離した
+      const { best } = evaluate(last.x, last.y, last.t, samples.length - 1);
+      return best ? dir(best) : null;
     },
 
     /** move が来ない（指が止まっている）あいだに呼ぶ。しばらく止まっていたら再び撃てる。 */
@@ -149,7 +180,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     const p = local(e);
     const side = sideOf(p.x, p.w);
     if (pointers[side] && pointers[side].dying === 0) return; // 同じ半画面の2本目は無視
-    pointers[side] = makePointer(e.pointerId, p, performance.now());
+    pointers[side] = makePointer(e.pointerId, p, eventTime(e));
     anyPointer = true;
     onFeedback('stick');
     if (canvas.setPointerCapture) {
@@ -162,19 +193,42 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     for (let i = 0; i < 2; i++) {
       const pt = pointers[i];
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
-      const p = local(e);
-      track(pt, p.x, p.y);
-      const f = pt.flick.feed(p.x, p.y, performance.now());
-      if (f) { flicks[i] = f; onFeedback('flick'); }
+      // 画面の更新1回ぶんにまとめられた途中の位置も、時刻つきで全部見る。
+      // 60Hz の move だけだと、30ms 未満の短いはじきが2点の間に埋もれて遅く見える。
+      let evs = null;
+      try { evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null; } catch (_) {}
+      if (!evs || !evs.length) evs = [e];
+      for (const ce of evs) {
+        const p = local(ce);
+        track(pt, p.x, p.y);
+        const f = pt.flick.feed(p.x, p.y, eventTime(ce));
+        if (f && !flicks[i]) { flicks[i] = f; onFeedback('flick'); }
+      }
     }
     e.preventDefault();
   }
 
+  /** イベントの発生時刻（performance.now と同じ基準）。怪しければ今の時刻。 */
+  function eventTime(e) {
+    const t = e.timeStamp, now = performance.now();
+    return t > 0 && t <= now + 1 && now - t < 1000 ? t : now;
+  }
+
   // 離しても何も起きない（止まるだけ）
-  function onUp(e) {
+  /**
+   * 離したとき。はじきながら離したなら突進する（押さえたままのはじきと同じ判定）。
+   * 止めてから離したときは何も起きない。
+   * @param {boolean} fire pointercancel（OSに取り上げられた指）では撃たない
+   */
+  function onUp(e, fire = true) {
     for (let i = 0; i < 2; i++) {
       const pt = pointers[i];
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
+      if (fire) {
+        const p = local(e);
+        const f = pt.flick.release(p.x, p.y, eventTime(e));
+        if (f) { flicks[i] = f; onFeedback('flick'); }
+      }
       dirs[i] = null;
       pt.dying = 1;
     }
@@ -183,8 +237,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
   canvas.addEventListener('pointerdown', onDown, { passive: false });
   canvas.addEventListener('pointermove', onMove, { passive: false });
-  window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
+  window.addEventListener('pointerup', (e) => onUp(e, true));
+  window.addEventListener('pointercancel', (e) => onUp(e, false));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---- キーボード（デスクトップ検証用） ----

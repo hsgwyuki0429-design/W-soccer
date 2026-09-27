@@ -87,6 +87,13 @@ export const CONFIG = {
   // だから飛ぶ向きは入力ではなく、駒の中心 → ボールの向きで決まる。
   kick: {
     reachPad: w(10),   // ボットが「もう当てられる」と見なす余裕
+    // キックは踏み込んだ向きへ飛ぶ。ただし当たった面との角度がこれ（cos）より寝ていたら
+    // 面の向きへ寄せる（真横へのかすり当たりで、体の中へ向かうボールにしない）。
+    minFaceDot: 0.35,
+    // 踏み込みでボールを叩いたときの最低限の速さ。当たった面と踏み込む向きのずれ（cos）が
+    // fullDot 以上なら満額、それより寝ているほど弱くなる。
+    speed: v(700),
+    fullDot: 0.8,
   },
 
   dash: {
@@ -99,13 +106,14 @@ export const CONFIG = {
   stick: {
     maxRadius: 60,      // CSS px
     knobRadius: 25,     // CSS px
-    // アクションは「離す直前に指が動いていれば」出る。速さは見ない。
-    // 出ないのは、指を止めてから離したときだけ。
-    // 向きは、離す直前の移動から取る（dirDist ぶん遡って安定させる）。
-    restMs: 120,        // ms。離す直前にこれ以上その場で止まっていたら発火しない
-    dirDist: 20,        // CSS px。向きを取るために遡る移動量の目安
-    dirWindowMs: 200,   // ms。これより古くは遡らない
-    minDist: 3,         // CSS px。窓の中でこれ未満しか動いていなければ「動いていない」
+    // 指を離さずに素早く動かす（はじく）と突進。直近 flickWindowMs の移動が
+    // flickDist 以上、かつ flickSpeed 以上の速さなら撃つ。ふつうの舵取りでは出ない速さにする。
+    flickWindowMs: 60,  // ms
+    flickDist: 22,      // CSS px
+    flickSpeed: 1100,   // CSS px/s
+    // 1回撃ったら、指がこれより遅くなるか rearmIdleMs 止まるまで次は撃たない（連発しない）
+    rearmSpeed: 350,    // CSS px/s
+    rearmIdleMs: 80,    // ms
   },
 
   // カメラ。注視点（ボールと自分の2駒）に合わせて寄り引きする。

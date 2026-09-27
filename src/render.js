@@ -520,11 +520,7 @@ function drawRipples(ctx, fx) {
 
 /**
  * 進行方向の矢印。動かしているあいだ、駒の前に短く太く半透明で出す。
- *
- * ボールがどこへ飛ぶかの予告ではない。キックは駒の中心 → ボールの向きへ
- * 飛ぶので、狙いは指の角度ではなく体の置き方で決まる。
- * この矢印が示すのは「今どっちへ進んでいるか」＝ そのまま離したときに
- * ダッシュする向きでもある。
+ * 突進の向きは、この矢印ではなく指をはじいた向きで決まる。
  *
  * dirs は画面座標。盤面を180度回して見ている側では、ワールドの向きは逆になる。
  */
@@ -537,14 +533,16 @@ function drawMoveArrows(ctx, input, screenOrder, flip, colorOf) {
     const d = input.dirs && input.dirs[side];
     const u = screenOrder[side];
     if (!d || !u) continue;
+    const angle = Math.atan2(d.y * k, d.x * k);
+    const alpha = A.alpha;
 
     const r0 = r + A.gap;
     const r1 = r0 + A.length;
 
     ctx.save();
     ctx.translate(u.x, u.y);
-    ctx.rotate(Math.atan2(d.y * k, d.x * k));
-    ctx.globalAlpha = A.alpha;
+    ctx.rotate(angle);
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = colorOf(u.team);
 
     // 軸と矢じりを一筆で。太く短く、輪郭は付けない。

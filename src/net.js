@@ -21,6 +21,10 @@ import { decodeState, copyState } from './snapshot.js';
 const STEP = 1 / 60;
 const MAX_PENDING = 180;     // 未確認の入力をこれ以上は抱えない（3秒）
 const SMOOTH_RATE = 14;      // 答え合わせのずれを寄せる速さ（1/秒）
+// 相手の駒は少しゆっくり寄せる。相手の踏み込みや方向転換は通信の往復ぶん遅れて分かり、
+// そのたびに大きくずれる。速く寄せると瞬間移動に見える。
+// 実測（往復約200ms・ボット同士）：相手の見え方のずれ 最大 128 → 95、99%点 82 → 69。
+const SMOOTH_RATE_OPP = 8;
 const BALL_SMOOTH_RATE = 30; // ボールは速く、ぶつかる相手も多いので、ずれを長く引きずらない
 // ボールが駒にこの距離（接触距離からの余り）より近づいたら、ボールのずれを
 // その駒のずれに揃えていく。描いた位置をばらばらにずらしたまま接触すると
@@ -237,8 +241,12 @@ export function createNet() {
       }
 
       const k = Math.exp(-SMOOTH_RATE * dt);
+      const kOpp = Math.exp(-SMOOTH_RATE_OPP * dt);
       const kb = Math.exp(-BALL_SMOOTH_RATE * dt);
-      for (const o of offsets.units) { o.x *= k; o.y *= k; }
+      offsets.units.forEach((o, i) => {
+        const f = mine(i) ? k : kOpp;
+        o.x *= f; o.y *= f;
+      });
       const ob = offsets.ball;
       ob.x *= kb; ob.y *= kb;
 

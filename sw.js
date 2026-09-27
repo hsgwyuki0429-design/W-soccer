@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v3-elite-cpu';
+const VERSION = 'pairkick-v4-net-predict';
 const SHELL = [
   './',
   './index.html',
@@ -23,6 +23,7 @@ const SHELL = [
   './src/audio.js',
   './src/ui.js',
   './src/net.js',
+  './src/snapshot.js',
 ];
 
 self.addEventListener('install', (e) => {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { createState, step, PHASE } from '../src/game.js';
+import { createFlickDetector } from '../src/input.js';
 
 const DT = 1 / 60;
 const RR = CONFIG.unit.radius + CONFIG.ball.radius;
@@ -42,7 +43,7 @@ test('芯で当てるほど強く、かすめるほど弱い。寝すぎた向�
   assert.ok(graze.angle < 60);
 });
 
-test('向きを渡さない踏み込み（タップ）は、駒が向いている方へ出る', () => {
+test('向きを渡さない踏み込み（キーボード）は、駒が向いている方へ出る', () => {
   const s = createState();
   s.phase = PHASE.PLAY;
   const u = s.units[0];
@@ -54,3 +55,57 @@ test('向きを渡さない踏み込み（タップ）は、駒が向いてい�
   assert.ok(u.dashT > 0);
   assert.ok(u.vx > 0 && Math.abs(u.vy) < 1e-6, `右へ踏み込む (${u.vx}, ${u.vy})`);
 });
+
+// ---------------------------------------------------------------- はじき
+
+/**
+ * 指の軌跡を hz の間隔で流し込み、撃った向きの一覧を返す。
+ * path(t) は t 秒後の指の位置（CSS px）。
+ */
+function flicksAlong(path, seconds, hz = 60) {
+  const f = createFlickDetector();
+  const p0 = path(0);
+  f.reset(p0.x, p0.y, 0);
+  const out = [];
+  for (let i = 1; i <= Math.round(seconds * hz); i++) {
+    const t = i / hz;
+    const p = path(t);
+    const d = f.feed(p.x, p.y, t * 1000);
+    if (d) out.push({ t, ...d });
+  }
+  return out;
+}
+
+for (const hz of [60, 120]) {
+  test(`ふつうの舵取りでは突進しない（${hz}Hz）`, () => {
+    // ゆっくり倒す → 大きく円を描く → 左端から右端へ切り返す
+    assert.equal(flicksAlong((t) => ({ x: 100 + 60 * Math.min(1, t / 0.3), y: 300 }), 1, hz).length, 0);
+    assert.equal(flicksAlong((t) => ({ x: 100 + 55 * Math.cos(t * 6), y: 300 + 55 * Math.sin(t * 6) }), 2, hz).length, 0);
+    assert.equal(flicksAlong((t) => ({ x: 100 + Math.max(-55, Math.min(55, -55 + 110 * (t - 0.2) / 0.15)), y: 300 }), 0.6, hz).length, 0);
+  });
+
+  test(`指を離さずにはじくと、その向きへ1回だけ突進する（${hz}Hz）`, () => {
+    // 右へ動かしてから、上へ 60px を 40ms ではじき、そのまま押さえ続ける
+    const path = (t) => {
+      if (t < 0.3) return { x: 100 + 40 * t / 0.3, y: 300 };
+      if (t < 0.34) return { x: 140, y: 300 - 60 * (t - 0.3) / 0.04 };
+      return { x: 140, y: 240 };
+    };
+    const got = flicksAlong(path, 1, hz);
+    assert.equal(got.length, 1);
+    assert.ok(got[0].y < -0.95, `上向き (${got[0].x.toFixed(2)}, ${got[0].y.toFixed(2)})`);
+    assert.ok(got[0].t >= 0.3 && got[0].t <= 0.36, `はじいている最中に出る (${got[0].t})`);
+  });
+
+  test(`はじいて止めたら、次のはじきでまた突進できる（${hz}Hz）`, () => {
+    const path = (t) => {
+      if (t < 0.04) return { x: 100 + 60 * t / 0.04, y: 300 };            // 右へはじく
+      if (t < 0.5) return { x: 160, y: 300 };                              // 止める
+      if (t < 0.54) return { x: 160 - 60 * (t - 0.5) / 0.04, y: 300 };     // 左へはじく
+      return { x: 100, y: 300 };
+    };
+    const got = flicksAlong(path, 1, hz);
+    assert.equal(got.length, 2);
+    assert.ok(got[0].x > 0.95 && got[1].x < -0.95);
+  });
+}

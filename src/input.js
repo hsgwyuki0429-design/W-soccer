@@ -1,14 +1,18 @@
 // input.js — タッチ / マウス / キーボード を「意図」へ変換する。
 // game.js には触れない。出すのは intents 配列と、描画用のポインタ状態だけ。
 //
-// 操作は2つだけ。
+// 操作は2つだけ。どちらも指を離さずにできる。
 //   ドラッグ … 置いた地点を支点にした相対操作（スティック）で移動。
 //              進行方向は「置いた地点 → 今の指」。離しても何も起きない（止まるだけ）。
-//   タップ   … 踏み込み（キック / ダッシュ / 体当たり）。向きは駒が向いている方向
-//              （最後に動かした向き）。ボールもその向きへ飛ぶ（game.js を参照）。
+//   はじく   … 指を素早く動かすと、その向きへ突進（キック / ダッシュ / 体当たり）。
+//              ボールに当たればはじいた向きへ飛ぶ（game.js を参照）。
+//              指は離さないので、突進のあとも移動がそのまま続く。
 //
-// 「離し方」で撃つ／撃たないを分ける方式はやめた。止まろうとして離しただけで
-// 暴発したり、離す直前に指が止まっていて出なかったりして、狙いどおりに撃てないため。
+// 指がスティックの外へ出たら、支点が指についてくる。はじいたあと指が遠くへ
+// 行っても、そのまま同じ向きへ走り続け、戻すときも大きく戻さなくてよい。
+//
+// 以前の「動かしながら離すと撃つ」はやめた。撃つたびに指を離すので
+// 移動が途切れ、止まろうとして離しただけで暴発することもあったため。
 //
 // 座標はすべて画面座標(CSS px)。カメラが動いても指の下から動かない。
 // 担当（左半分＝左の駒）も画面基準。コート上の左右ではない。
@@ -19,6 +23,66 @@ const S = CONFIG.stick;
 const A = CONFIG.moveArrow;
 
 /**
+ * 「はじき」の検出。指の位置を時刻つきで与えると、素早く動いた瞬間にその向きを返す。
+ * DOM に触れないので単体で試せる。
+ *
+ * 見るのは直近 flickWindowMs の移動量と速さ。ふつうの舵取りより速く、
+ * ある程度の距離を動いたときだけ撃つ。1回撃ったら、指がいったん遅くなる
+ * （または止まる）まで次は撃たない。はじき1回で連発しないように。
+ */
+export function createFlickDetector(cfg = S) {
+  let samples = [];
+  let armed = true;
+
+  return {
+    get armed() { return armed; },
+
+    reset(x, y, t) {
+      samples = [{ x, y, t }];
+      armed = true;
+    },
+
+    /** @returns {{x:number,y:number}|null} はじいた向き（画面座標・長さ1） */
+    feed(x, y, t) {
+      samples.push({ x, y, t });
+      while (samples.length > 2 && t - samples[0].t > cfg.flickWindowMs * 3) samples.shift();
+
+      // 窓の中の各点から今までを見て、速く・十分に動いた区間があれば撃つ。
+      // 窓全体の平均だけを見ると、窓より短い鋭いはじきが薄まって取りこぼす。
+      // 向きは、条件を満たす区間のうち最も長いもので取る（短い区間は向きが暴れる）。
+      // move の間隔が窓より長いときは、ひとつ前の点だけを見る。
+      let best = null, fastest = 0;
+      for (let i = samples.length - 2; i >= 0; i--) {
+        const a = samples[i];
+        const age = t - a.t;
+        if (age > cfg.flickWindowMs && !(i === samples.length - 2 && age <= cfg.flickWindowMs * 2)) break;
+        const dx = x - a.x, dy = y - a.y;
+        const dist = Math.hypot(dx, dy);
+        const speed = dist / Math.max(age, 8) * 1000;   // px/s
+        fastest = Math.max(fastest, speed);
+        if (dist >= cfg.flickDist && speed >= cfg.flickSpeed) best = { dx, dy, dist };
+      }
+
+      if (!armed) {
+        if (fastest < cfg.rearmSpeed) armed = true;
+        return null;
+      }
+      if (best) {
+        armed = false;
+        return { x: best.dx / best.dist, y: best.dy / best.dist };
+      }
+      return null;
+    },
+
+    /** move が来ない（指が止まっている）あいだに呼ぶ。しばらく止まっていたら再び撃てる。 */
+    idle(t) {
+      const last = samples[samples.length - 1];
+      if (!armed && last && t - last.t > cfg.rearmIdleMs) armed = true;
+    },
+  };
+}
+
+/**
  * @param {HTMLCanvasElement} canvas
  * @param {object} opts
  * @param {(name:string) => void} [opts.onFeedback]
@@ -26,7 +90,7 @@ const A = CONFIG.moveArrow;
 export function createInput(canvas, { onFeedback = () => {} } = {}) {
   // side 0 = 左半画面 → 駒0 / side 1 = 右半画面 → 駒1（担当は固定）
   const pointers = [null, null];
-  const released = [null, null];   // 離した瞬間に確定したアクション（fill が回収する）
+  const flicks = [null, null];     // はじいた瞬間に確定したアクション（fill が回収する）
   // 今スティックが倒れている向き（画面座標）。進行方向の矢印を描くのに使う。
   const dirs = [null, null];
   const keys = new Set();
@@ -47,20 +111,26 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   function makePointer(id, p, now) {
     return {
       id,
-      baseX: p.x, baseY: p.y,     // 指を置いた地点（画面）。以後動かさない
+      baseX: p.x, baseY: p.y,     // 支点（画面）。指がスティックの外へ出たらついてくる
       curX: p.x, curY: p.y,       // 今の指の位置（画面）
       knobX: p.x, knobY: p.y,     // 表示用にクランプしたノブ（画面）
       born: now,
       alpha: 1,
       dying: 0,
-      travel: 0,                  // 置いた地点から最も離れた距離（タップかどうかの判定）
-      dragging: false,            // タップではなくドラッグ（移動）だと確定したか
+      flick: (() => { const f = createFlickDetector(); f.reset(p.x, p.y, now); return f; })(),
     };
   }
 
   function track(pt, x, y) {
     pt.curX = x; pt.curY = y;
-    pt.travel = Math.max(pt.travel, Math.hypot(x - pt.baseX, y - pt.baseY));
+    // 支点が指についてくる（スティックの半径より外へは離れない）
+    const dx = x - pt.baseX, dy = y - pt.baseY;
+    const d = Math.hypot(dx, dy);
+    if (d > S.maxRadius) {
+      const k = (d - S.maxRadius) / d;
+      pt.baseX += dx * k;
+      pt.baseY += dy * k;
+    }
   }
 
   /**
@@ -73,19 +143,6 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     const d = Math.hypot(dx, dy);
     if (d < S.maxRadius * A.minInput) return null;
     return { x: dx / d, y: dy / d };
-  }
-
-  /** 長く触れているか大きく動かしたら、タップではなくドラッグ（移動）と確定する。 */
-  function isDragging(pt) {
-    if (!pt.dragging && (pt.travel > S.tapDist || performance.now() - pt.born > S.tapMs)) {
-      pt.dragging = true;
-    }
-    return pt.dragging;
-  }
-
-  /** 短く、ほとんど動かさずに離した＝タップ。 */
-  function isTap(pt) {
-    return !isDragging(pt);
   }
 
   function onDown(e) {
@@ -102,24 +159,22 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   }
 
   function onMove(e) {
-    for (const pt of pointers) {
+    for (let i = 0; i < 2; i++) {
+      const pt = pointers[i];
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
       const p = local(e);
       track(pt, p.x, p.y);
+      const f = pt.flick.feed(p.x, p.y, performance.now());
+      if (f) { flicks[i] = f; onFeedback('flick'); }
     }
     e.preventDefault();
   }
 
-  /** @param {boolean} fire pointercancel（OSに取り上げられた指）では撃たない */
-  function onUp(e, fire = true) {
+  // 離しても何も起きない（止まるだけ）
+  function onUp(e) {
     for (let i = 0; i < 2; i++) {
       const pt = pointers[i];
       if (!pt || pt.id !== e.pointerId || pt.dying) continue;
-      // 離した位置も反映してから判定する（up の座標が move と違う環境がある）
-      const p = local(e);
-      track(pt, p.x, p.y);
-      // 向きは渡さない（0,0）。game.js が駒の向いている方向へ踏み込む。
-      released[i] = fire && isTap(pt) ? { x: 0, y: 0 } : null;
       dirs[i] = null;
       pt.dying = 1;
     }
@@ -128,8 +183,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
   canvas.addEventListener('pointerdown', onDown, { passive: false });
   canvas.addEventListener('pointermove', onMove, { passive: false });
-  window.addEventListener('pointerup', (e) => onUp(e, true));
-  window.addEventListener('pointercancel', (e) => onUp(e, false));
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---- キーボード（デスクトップ検証用） ----
@@ -175,7 +230,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
           pt.alpha -= dt / 0.18;
           if (pt.alpha <= 0) { pointers[i] = null; continue; }
         } else {
-          dirs[i] = isDragging(pt) ? stickDir(pt) : null;
+          dirs[i] = stickDir(pt);
+          pt.flick.idle(performance.now());
         }
         const dx = pt.curX - pt.baseX;
         const dy = pt.curY - pt.baseY;
@@ -197,18 +253,14 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
         const pt = pointers[side];
 
         if (pt && !pt.dying) {
-          // タップかドラッグか決まるまでは動かさない。タップ中の指のわずかなブレで
-          // 駒の向きが変わると、踏み込む向き（＝ボールが飛ぶ向き）が狂うため。
-          if (isDragging(pt)) {
-            // 置いた地点を支点にした倒し量。向きは「置いた地点 → 今の指」
-            const dx = pt.knobX - pt.baseX;
-            const dy = pt.knobY - pt.baseY;
-            move = { x: dx / S.maxRadius, y: dy / S.maxRadius };
-          }
+          // 支点を中心にした倒し量。向きは「支点 → 今の指」
+          const dx = pt.knobX - pt.baseX;
+          const dy = pt.knobY - pt.baseY;
+          move = { x: dx / S.maxRadius, y: dy / S.maxRadius };
         }
 
-        // 離した瞬間に確定したアクションを1回だけ渡す
-        if (released[side]) { flick = released[side]; released[side] = null; }
+        // はじいた瞬間に確定したアクションを1回だけ渡す
+        if (flicks[side]) { flick = flicks[side]; flicks[side] = null; }
 
         const km = keyboardMove(side);
         if (km) move = km;
@@ -217,7 +269,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
           const l = Math.hypot(move.x, move.y);
           flick = l > 0.1
             ? { x: move.x / l, y: move.y / l }
-            : { x: 0, y: 0 };    // 入力が無ければ駒の向いている方向へ（タップと同じ）
+            : { x: 0, y: 0 };    // 入力が無ければ駒の向いている方向へ
         }
 
         intents[side] = { move, flick };
@@ -228,7 +280,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
     reset() {
       pointers[0] = pointers[1] = null;
-      released[0] = released[1] = null;
+      flicks[0] = flicks[1] = null;
       dirs[0] = dirs[1] = null;
       keys.clear();
       keyAction[0] = keyAction[1] = null;

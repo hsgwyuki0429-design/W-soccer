@@ -106,10 +106,14 @@ export const CONFIG = {
   stick: {
     maxRadius: 60,      // CSS px
     knobRadius: 25,     // CSS px
-    // タップ（短く触れて離す）でアクション。ドラッグして離しても何も起きない。
-    // どちらかを超えたらドラッグ（移動）とみなす。
-    tapMs: 260,         // ms。これより長く触れていたらタップではない
-    tapDist: 14,        // CSS px。これより動いたらタップではない
+    // 指を離さずに素早く動かす（はじく）と突進。直近 flickWindowMs の移動が
+    // flickDist 以上、かつ flickSpeed 以上の速さなら撃つ。ふつうの舵取りでは出ない速さにする。
+    flickWindowMs: 60,  // ms
+    flickDist: 22,      // CSS px
+    flickSpeed: 1100,   // CSS px/s
+    // 1回撃ったら、指がこれより遅くなるか rearmIdleMs 止まるまで次は撃たない（連発しない）
+    rearmSpeed: 350,    // CSS px/s
+    rearmIdleMs: 80,    // ms
   },
 
   // カメラ。注視点（ボールと自分の2駒）に合わせて寄り引きする。
@@ -128,7 +132,6 @@ export const CONFIG = {
     head: w(20),
     alpha: 0.45,      // 半透明（芝の上で読める下限。これ以下だと茶色く沈む）
     minInput: 0.18,   // 倒し量がこれ未満なら出さない
-    idleAlpha: 0.2,   // 指を離しているあいだ、向いている方向（＝タップで踏み込む向き）を薄く出す
   },
 
   heat: {

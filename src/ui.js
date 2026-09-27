@@ -103,6 +103,12 @@ export function createUI(onPrimary, onCancel = () => {}) {
       cpuTag.textContent = level == null ? '' : `CPU Lv.${normalizeCpuLevel(level)} · 2対${cpuTeamSize(level)}${normalizeCpuLevel(level) === 100 ? ' · 神級' : ''}`;
     },
 
+    /** 対人戦の通信状態。null で消す */
+    setNetInfo(text) {
+      cpuTag.hidden = text == null;
+      cpuTag.textContent = text == null ? '' : text;
+    },
+
     setUnit(u, hudBand) {
       const root = document.documentElement.style;
       root.setProperty('--u', u + 'px');

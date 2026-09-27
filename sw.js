@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v4-net-predict';
+const VERSION = 'pairkick-v6-ball-draw';
 const SHELL = [
   './',
   './index.html',

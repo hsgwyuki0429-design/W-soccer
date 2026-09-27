@@ -16,10 +16,18 @@ import { createState, step, restart, PHASE } from '../src/game.js';
 import { encodeState } from '../src/snapshot.js';
 
 const TICK = 1 / 60;
-const SNAPSHOT_HZ = 30;
+// 状態は進めるたびに（60Hz）配る。間引くと、そのぶん相手やボールの答え合わせが遅れる。
 // 溜めておく入力の上限（ステップ数）。これを超えたぶんは古い順に捨てて、
 // 通信が詰まったあとに遅れを抱えたまま進むことがないようにする。
 const MAX_QUEUE = 4;
+// 入力が「常にこれ以上」溜まっている状態が TRIM_WINDOW ステップ続いたら、1つ捨てて縮める。
+// 揺らぎで一度溜まった入力は、送る側と使う側が同じ速さなので自然には減らない。
+// 放っておくと、そのぶんずっとサーバーでの反映が遅れたままになる。
+const TRIM_ABOVE = 1;
+const TRIM_WINDOW = 30;
+// 送信待ちがこれを超えている相手には、状態を送らずに飛ばす（回線が細いときに遅れを積まない）。
+// 状態は毎回丸ごとなので、1つ飛ばしても次ので追いつける。
+const MAX_BUFFERED = 32 * 1024;
 // 異常に送りつけられても、抱える入力はここまで（古いものから捨てる）
 const HARD_QUEUE = 120;
 
@@ -41,6 +49,9 @@ export function handleConnection(conn) {
     ack: 0,
     // 入力が途切れたときに使い続ける、直近の移動入力（フリックは含めない）
     last: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
+    minQueue: Infinity,   // TRIM_WINDOW のあいだに見た、溜まっていた入力の最小数
+    queueTicks: 0,
+    events: [],           // まだこのクライアントへ送れていないイベント
   };
 
   conn.on('message', (text) => {
@@ -54,10 +65,12 @@ export function handleConnection(conn) {
       case 'restart':
         if (client.room && client.room.state.phase === PHASE.OVER) {
           restart(client.room.state);
-          client.room.pending = [];
+          for (const p of client.room.players) p.events.length = 0;
         }
         break;
       case 'leave': drop(client); break;
+      // 通信の往復時間を測るためのもの。受け取った値をそのまま返す
+      case 'p': send(conn, { t: 'P', c: Number(msg.c) || 0 }); break;
     }
   });
 
@@ -87,10 +100,8 @@ function makeRoom(a, b) {
   const room = {
     state: createState(),
     players: [a, b],
-    pending: [],          // 直近スナップショット以降に出たイベント
     seq: 0,
     acc: 0,
-    snapAcc: 0,
     timer: null,
     last: process.hrtime.bigint(),
   };
@@ -100,6 +111,9 @@ function makeRoom(a, b) {
   for (const p of room.players) {
     p.queue.length = 0;
     p.ack = 0;
+    p.minQueue = Infinity;
+    p.queueTicks = 0;
+    p.events.length = 0;
     p.last[0].x = p.last[0].y = p.last[1].x = p.last[1].y = 0;
   }
   rooms.add(room);
@@ -136,12 +150,16 @@ function takeIntents(p) {
   const q = p.queue;
   // 溜まりすぎていたら古いものを捨てて追いつく。フリックだけは捨てずに次へ引き継ぐ
   // （踏み込みが消えると「押したのに出ない」になる）。
-  while (q.length > MAX_QUEUE) {
-    const old = q.shift();
-    if (old.a.flick && !q[0].a.flick) q[0].a.flick = old.a.flick;
-    if (old.b.flick && !q[0].b.flick) q[0].b.flick = old.b.flick;
-    p.ack = old.n;
+  while (q.length > MAX_QUEUE) skipOne(p);
+
+  // ずっと余分に溜まっているなら1つ捨てて、サーバーでの反映を早める
+  p.minQueue = Math.min(p.minQueue, q.length);
+  if (++p.queueTicks >= TRIM_WINDOW) {
+    if (p.minQueue > TRIM_ABOVE) skipOne(p);
+    p.minQueue = Infinity;
+    p.queueTicks = 0;
   }
+
   const inp = q.shift();
   if (!inp) {
     // まだ届いていない。直前の移動を続ける（止めるとカクつく）
@@ -151,6 +169,17 @@ function takeIntents(p) {
   p.last[0].x = inp.a.move.x; p.last[0].y = inp.a.move.y;
   p.last[1].x = inp.b.move.x; p.last[1].y = inp.b.move.y;
   return [inp.a, inp.b];
+}
+
+/** 最も古い入力を使わずに捨てる。フリックは次の入力へ引き継ぐ。 */
+function skipOne(p) {
+  const q = p.queue;
+  const old = q.shift();
+  if (q[0]) {
+    if (old.a.flick && !q[0].a.flick) q[0].a.flick = old.a.flick;
+    if (old.b.flick && !q[0].b.flick) q[0].b.flick = old.b.flick;
+  }
+  p.ack = old.n;
 }
 
 function clamp1(v) {
@@ -181,33 +210,32 @@ function tickRoom(room) {
     room.moves = intents.map((it) => [r2(it.move.x), r2(it.move.y)]);
 
     const evs = step(room.state, intents, TICK);
-    for (const e of evs) room.pending.push(e);
+    for (const p of room.players) for (const e of evs) p.events.push(e);
   }
 
-  room.snapAcc += dt;
-  const period = 1 / SNAPSHOT_HZ;
-  if (room.snapAcc >= period) {
-    room.snapAcc -= period;
-    if (room.snapAcc > period) room.snapAcc = 0;   // 大きく遅れたら追いつこうとしない
-    broadcast(room);
-  }
+  if (steps > 0) broadcast(room);
 }
 
 function broadcast(room) {
   const ack = [0, 0];
   for (const p of room.players) ack[p.team] = p.ack;
-  const snap = {
+  // 共通部分は1回だけ文字列にし、イベントだけ相手ごとに足す
+  const base = JSON.stringify({
     t: 's',
     n: ++room.seq,
     s: encodeState(room.state),
     k: ack,
     m: room.moves || [[0, 0], [0, 0], [0, 0], [0, 0]],
-    ev: room.pending.length ? room.pending : undefined,
-  };
-  room.pending = [];
-  const text = JSON.stringify(snap);
+  });
   for (const p of room.players) {
-    if (p.conn.open) { try { p.conn.send(text); } catch (_) {} }
+    if (!p.conn.open) continue;
+    if (p.conn.buffered > MAX_BUFFERED) continue;   // 詰まっている。イベントは次で送る
+    let text = base;
+    if (p.events.length) {
+      text = base.slice(0, -1) + ',"ev":' + JSON.stringify(p.events) + '}';
+      p.events = [];
+    }
+    try { p.conn.send(text); } catch (_) {}
   }
 }
 

@@ -93,6 +93,7 @@ function onPrimary() {
 
 function leaveVersus() {
   versus = false;
+  ui.setNetInfo(null);
   net.disconnect();
   renderer.setViewpoint(0);
   restart(state, 2);
@@ -110,6 +111,7 @@ net.on('status', (st) => {
   }
   if (st === 'gone') {
     versus = false;
+    ui.setNetInfo(null);
     running = false;
     ui.showNetError('相手が切断しました');
     return;
@@ -303,6 +305,7 @@ function frame(now) {
   audio.setHeat(heatRatio(state));
   ui.setScore(state.score[myTeam()], state.score[1 - myTeam()]);
   ui.setMatchPoint(isMatchPoint(state) && state.phase !== PHASE.OVER);
+  if (versus) showNetInfo(now);
 
   renderer.draw(state, fx, input);
 }
@@ -344,6 +347,15 @@ function tick(dt) {
     }
   }
 
+}
+
+// 対人戦の通信の往復時間を右上に出す。体感のラグがどこから来ているかの目安。
+let netInfoAt = 0;
+function showNetInfo(now) {
+  if (now - netInfoAt < 500) return;
+  netInfoAt = now;
+  const r = net.rtt;
+  ui.setNetInfo(r < 0 ? '対人戦 · 通信 測定中' : `対人戦 · 通信 ${Math.round(r)}ms`);
 }
 
 // フェーズの変わり目を1か所で見る。対人戦では tick のあとにサーバーの状態へ

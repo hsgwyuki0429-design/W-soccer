@@ -27,10 +27,15 @@ npm start                       # node server.js（依存ゼロ）
 公開URLは <https://hsgwyuki0429-design.github.io/W-soccer/> です。
 サブパス配信になるため、アセット参照はすべて相対パスにしてあります。
 
-**Render** — リポジトリを指定すれば `render.yaml` を読んで静的サイトとして配信します。
-Web Service として動かしたい場合は `render.yaml` 末尾のコメントの設定に差し替えてください。
+**Render** — `render.yaml`（Blueprint）で **Web Service** として動かします。対人戦の
+WebSocket サーバーを兼ねるので、対人戦はこちらのURLで遊びます。
 `server.js` が `PORT` を読み、`.js` に `text/javascript` を付けて配信します
 （MIMEが違うとESモジュールはブラウザに拒否されます）。
+
+リージョンは **Singapore** です（日本から往復70ms前後。既定の Oregon だと150〜200ms）。
+対人戦のラグはほぼ通信の往復時間で決まるので、遊ぶ人の近くに置いています。
+Render はサービス作成後にリージョンを変えられないため、Oregon から移すときは
+新しいサービス（`pair-kick-sg`）として作り、古いものはダッシュボードから削除します。
 
 ## 操作
 

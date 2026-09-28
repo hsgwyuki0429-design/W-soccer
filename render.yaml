@@ -1,9 +1,15 @@
 # Render Blueprint。
 # 対人戦に WebSocket サーバーが要るので Web Service で動かす。
 # server.js は静的配信も兼ねているので、これ1つでゲーム本体も配信される。
+#
+# リージョンは Singapore（日本から往復70ms前後。Oregon だと150〜200ms）。
+# 対人戦のラグはほぼ通信の往復時間で決まるので、遊ぶ人の近くに置く。
+# Render は作成後にリージョンを変えられないため、名前を変えて新しいサービスとして作る
+# （旧 pair-kick は Oregon のまま残るので、移行が済んだらダッシュボードから削除する）。
 services:
   - type: web
-    name: pair-kick
+    name: pair-kick-sg
+    region: singapore
     runtime: node
     plan: free
     buildCommand: ""

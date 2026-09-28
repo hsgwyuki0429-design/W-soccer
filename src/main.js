@@ -35,8 +35,10 @@ let bot = createBot();
 const intents = [null, null, null, null];
 
 const input = createInput(canvas, {
-  onFeedback: (kind) => { if (kind === 'stick') audio.click(); },
+  onFeedback: (kind) => { if (kind === 'stick' || kind === 'tap') audio.click(); },
 });
+input.setMode(ui.controlMode);
+ui.onControlMode = (m) => input.setMode(m);
 
 let snapCamera = true;   // キックオフ・リセット時はカメラを補間せずに飛ばす
 let versus = false;      // 対人戦なら true（試合はサーバーが進める）
@@ -312,7 +314,7 @@ function frame(now) {
 
 function tick(dt) {
   const order = renderer.myUnitsInScreenOrder(state);
-  input.fill(netIntents, order);
+  input.fill(netIntents, order, renderer.worldToScreen);
 
   if (versus) {
     // 反転してプレイしている側は、画面の向きと世界の向きが逆になる

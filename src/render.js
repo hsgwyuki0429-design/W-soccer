@@ -220,6 +220,12 @@ export function createRenderer(canvas) {
     ctx, view, cam, resize, updateCamera, draw,
     myUnitsInScreenOrder,
     teamColor,
+    /** 世界座標 → 画面座標(CSS px)。シェイクは含めない */
+    worldToScreen(x, y) {
+      let dx = (x - cam.x) * cam.scale, dy = (y - cam.y) * cam.scale;
+      if (flip) { dx = -dx; dy = -dy; }
+      return { x: view.cssW / 2 + dx, y: view.cssH / 2 + dy };
+    },
     get flip() { return flip; },
     /** 対人戦で自分が team 1 になったときに呼ぶ */
     setViewpoint(team) {

@@ -11,6 +11,11 @@
 // 払う動きは合図であって、狙いではない。狙いは駒をどこへ置いたかで決まる
 // （キックは駒の中心 → ボールの向きへ飛ぶ。game.js を参照）。
 //
+// 操作方法 'tap' では、離してもアクションは出ない。タックルは画面のタップで出る。
+// 向きは「駒（画面上の位置）→ タップした地点」。スティックを握ったまま別の指で
+// 同じ半画面を叩いてもよいし、指を置いてすぐ離す（動かさない）短いタップでもよい。
+// どの駒が出るかは、叩いた半画面で決まる（担当はスティックと同じ）。
+//
 // 座標はすべて画面座標(CSS px)。カメラが動いても指の下から動かない。
 // 担当（左半分＝左の駒）も画面基準。コート上の左右ではない。
 
@@ -33,6 +38,8 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   const keys = new Set();
   const keyAction = [null, null];
   let anyPointer = false;
+  let mode = 'stick';              // 'stick' | 'tap'
+  const taps = [null, null];       // タップで確定したタックルの目標（画面座標）
 
   /** クライアント座標 → canvas 基準の CSS px */
   function local(e) {
@@ -128,7 +135,15 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   function onDown(e) {
     const p = local(e);
     const side = sideOf(p.x, p.w);
-    if (pointers[side] && pointers[side].dying === 0) return; // 同じ半画面の2本目は無視
+    if (pointers[side] && pointers[side].dying === 0) {
+      // 同じ半画面の2本目。タップ操作ならその場でタックル、そうでなければ無視
+      if (mode === 'tap') {
+        taps[side] = { x: p.x, y: p.y };
+        onFeedback('tap');
+        e.preventDefault();
+      }
+      return;
+    }
     pointers[side] = makePointer(e.pointerId, p, performance.now());
     anyPointer = true;
     onFeedback('stick');
@@ -155,7 +170,16 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       // 離した位置も反映してから判定する（up の座標が move と違う環境がある）
       const p = local(e);
       track(pt, p.x, p.y, performance.now());
-      released[i] = fire ? resolveRelease(pt) : null;
+      if (mode === 'tap') {
+        released[i] = null;
+        // 置いてすぐ、動かさずに離したらタップ
+        const moved = Math.hypot(p.x - pt.baseX, p.y - pt.baseY);
+        if (fire && performance.now() - pt.born <= S.tapMs && moved < S.tapDist) {
+          taps[i] = { x: p.x, y: p.y };
+        }
+      } else {
+        released[i] = fire ? resolveRelease(pt) : null;
+      }
       dirs[i] = null;
       pt.dying = 1;
     }
@@ -224,9 +248,10 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
     /**
      * プレイヤー2駒ぶんの意図を intents[0], intents[1] に書き込む。
-     * @param {Array} units 自分の2駒（今は読まないが、呼び出し側の並び順の証跡として残す）
+     * @param {Array} units 自分の2駒（画面の左→右の順）
+     * @param {(x:number, y:number) => {x:number, y:number}} [toScreen] 世界 → 画面(CSS px)。タップ操作で使う
      */
-    fill(intents, units) {
+    fill(intents, units, toScreen) {
       for (let side = 0; side < 2; side++) {
         let move = { x: 0, y: 0 };
         let flick = null;
@@ -241,6 +266,19 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
         // 離した瞬間に確定したアクションを1回だけ渡す
         if (released[side]) { flick = released[side]; released[side] = null; }
+
+        // タップ：駒の画面位置 → タップ地点の向きへタックル
+        if (taps[side]) {
+          const tp = taps[side];
+          taps[side] = null;
+          const u = units && units[side];
+          if (u && toScreen) {
+            const us = toScreen(u.x, u.y);
+            const dx = tp.x - us.x, dy = tp.y - us.y;
+            const l = Math.hypot(dx, dy);
+            flick = l > 1 ? { x: dx / l, y: dy / l } : { x: 0, y: 0 };
+          }
+        }
 
         const km = keyboardMove(side);
         if (km) move = km;
@@ -258,9 +296,18 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
     get active() { return anyPointer; },
 
+    get mode() { return mode; },
+    /** @param {'stick'|'tap'} m */
+    setMode(m) {
+      mode = m === 'tap' ? 'tap' : 'stick';
+      released[0] = released[1] = null;
+      taps[0] = taps[1] = null;
+    },
+
     reset() {
       pointers[0] = pointers[1] = null;
       released[0] = released[1] = null;
+      taps[0] = taps[1] = null;
       dirs[0] = dirs[1] = null;
       keys.clear();
       keyAction[0] = keyAction[1] = null;

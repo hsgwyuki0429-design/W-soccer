@@ -5,6 +5,7 @@ import { normalizeCpuLevel, cpuTeamSize } from './cpu.js';
 
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
+const CTRL_KEY = 'pairkick.controlMode';
 
 export function createUI(onPrimary, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
@@ -70,6 +71,33 @@ export function createUI(onPrimary, onCancel = () => {}) {
     paintOpp();
   });
 
+  // 操作方法：'stick'（離してタックル）/ 'tap'（画面タップでタックル）
+  const ovCtrl = el('ov-control');
+  const hintAct = el('hint-act');
+  let controlMode = 'stick';
+  try { controlMode = localStorage.getItem(CTRL_KEY) === 'tap' ? 'tap' : 'stick'; } catch (_) {}
+  let onControlMode = () => {};
+  function paintCtrl() {
+    for (const b of ovCtrl.querySelectorAll('.seg')) {
+      b.classList.toggle('on', b.dataset.ctrl === controlMode);
+    }
+    hintAct.innerHTML = controlMode === 'tap'
+      ? '<b>タップ</b><span>タックル（駒→指の向き）</span>'
+      : '<b>離す</b><span>キック / ダッシュ</span>';
+  }
+  ovCtrl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovCtrl.addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    controlMode = b.dataset.ctrl === 'tap' ? 'tap' : 'stick';
+    try { localStorage.setItem(CTRL_KEY, controlMode); } catch (_) {}
+    paintCtrl();
+    onControlMode(controlMode);
+  });
+  paintCtrl();
+
   let bannerTimer = 0;
   let shown = [-1, -1];
   let lockUntil = 0;              // 直前の指残りで即再戦してしまうのを防ぐ
@@ -96,6 +124,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
 
   return {
     get opponent() { return opponent; },
+    get controlMode() { return controlMode; },
+    set onControlMode(fn) { onControlMode = fn; },
     get cpuLevel() { return saveCpuLevel(); },
 
     setCpuMatch(level) {

@@ -1,6 +1,19 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<script>
+  // LINEなどのアプリ内ブラウザで開かれたら、標準のブラウザ（Safari / Chrome等）へ
+  // 開き直す。canvasを使うゲームはアプリ内ブラウザだと不安定なことがあるため。
+  (function () {
+    var ua = navigator.userAgent || '';
+    var url = location.href;
+    if (/\bLine\//i.test(ua) && url.indexOf('openExternalBrowser=') === -1) {
+      // LINEはこのパラメータを見て、自身を閉じて標準ブラウザで同じURLを開く
+      var sep = url.indexOf('?') === -1 ? '?' : '&';
+      location.replace(url + sep + 'openExternalBrowser=1');
+    }
+  })();
+</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
 <meta name="theme-color" content="#0b1712" />

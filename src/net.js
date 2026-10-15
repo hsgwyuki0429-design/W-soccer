@@ -75,7 +75,9 @@ export function createNet() {
   // 試合の正解をどこからもらうか： server（サーバー経由） | host（自分が進める） | guest（直結の相手から）
   let mode = 'server';
   let pc = null;                      // RTCPeerConnection
-  let dc = null;                      // RTCDataChannel
+  let dc = null;                      // RTCDataChannel（入力・イベント・往復時間。確実に順に届く）
+  let sc = null;                      // 状態だけを送る RTCDataChannel（届かなくても再送しない）
+  let lastN = 0;                      // 受け取った状態の通し番号のうち最新
   let remoteCands = null;             // 相手の接続情報が来る前に届いた候補（来たら入れる）
   let linkTimer = null;
   let match = null;                   // ホストのときだけ。試合そのもの
@@ -112,6 +114,7 @@ export function createNet() {
     serverEvents = [];
     rtt = -1;
     peerAt = performance.now();
+    lastN = 0;
     for (const o of offsets.units) o.x = o.y = 0;
     offsets.ball.x = offsets.ball.y = 0;
   }
@@ -178,8 +181,13 @@ export function createNet() {
   function fromAuthority(m) {
     if (m.t === 's') {
       if (!m.s || !Array.isArray(m.s.u)) return;
-      latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
+      // イベントは状態が古くても拾う（直結では、イベントつきの状態だけ別の経路で来るので
+      // 後から来た新しい状態に追い越されることがある）
       if (m.ev) for (const ev of m.ev) if (fromServer(ev)) serverEvents.push(ev);
+      const n = Number(m.n) || 0;
+      if (n && n <= lastN) return;   // 追い越された古い状態
+      lastN = n;
+      latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
     } else if (m.t === 'P') {
       const r = performance.now() - Number(m.c);
       if (r >= 0 && r < 10000) rtt = rtt < 0 ? r : rtt * 0.7 + r * 0.3;
@@ -212,13 +220,19 @@ export function createNet() {
     if (team === 0) {
       // ホスト。状態は毎回丸ごと送るが、入力（踏み込み）は落とせないので確実に届く設定にする
       bindChannel(pc.createDataChannel('g', { ordered: true }));
+      // 状態は毎回丸ごとなので、落ちたら再送を待つより次を使うほうが早い。
+      // 確実に届く経路だと、Wi-Fiで1つ落ちただけで後ろの状態がすべて待たされる
+      bindStates(pc.createDataChannel('s', { ordered: false, maxRetransmits: 0 }));
       pc.createOffer()
         .then((o) => pc && pc.setLocalDescription(o))
         .then(() => pc && wsSend({ t: 'rtc', d: { sdp: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription } }))
         .catch(() => giveUpLink());
       linkTimer = setTimeout(giveUpLink, LINK_MS);
     } else {
-      pc.ondatachannel = (e) => bindChannel(e.channel);
+      pc.ondatachannel = (e) => {
+        if (e.channel.label === 's') bindStates(e.channel);
+        else bindChannel(e.channel);
+      };
     }
   }
 
@@ -257,6 +271,18 @@ export function createNet() {
     };
   }
 
+  function bindStates(ch) {
+    sc = ch;
+    sc.onmessage = (e) => {
+      if (mode !== 'guest') return;
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (!m || typeof m !== 'object') return;
+      peerAt = performance.now();
+      fromAuthority(m);
+    };
+  }
+
   function onSignal(d) {
     if (!pc || !d || typeof d !== 'object') return;
     if (d.sdp) {
@@ -287,7 +313,10 @@ export function createNet() {
       outs[1 - myTeam] = {
         get open() { return !!dc && dc.readyState === 'open'; },
         get buffered() { return dc ? dc.bufferedAmount : 0; },
-        send: (text) => dc.send(text),
+        send: (text, mustArrive) => {
+          if (!mustArrive && sc && sc.readyState === 'open') sc.send(text);
+          else dc.send(text);
+        },
       };
       match = createMatch(outs);
       hostLast = performance.now();
@@ -317,6 +346,11 @@ export function createNet() {
       dc.onopen = dc.onclose = dc.onmessage = null;
       try { dc.close(); } catch (_) {}
     }
+    if (sc) {
+      sc.onmessage = null;
+      try { sc.close(); } catch (_) {}
+    }
+    sc = null;
     if (pc) {
       pc.onicecandidate = pc.ondatachannel = null;
       try { pc.close(); } catch (_) {}

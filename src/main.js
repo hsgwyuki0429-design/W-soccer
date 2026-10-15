@@ -46,6 +46,16 @@ const netIntents = [null, null];
 
 let running = false;
 let acc = 0;
+
+// 描画用の状態。物理は 1/60 秒刻みで進むが、画面は 120Hz など別の間隔で描かれ、
+// 60Hz の画面でも1フレームに0回・2回進むことがある。そのまま描くと駒やボールが
+// 「進む・止まる」を繰り返してカクついて見える。そこで直近2ステップの位置を覚えておき、
+// 描くときはそのあいだを経過時間で補う（最大1ステップ＝約17msぶん後ろを描く）。
+const view = { ...createState(), units: [], ball: {} };
+let posPrev = new Float64Array(0);
+let posCur = new Float64Array(0);
+// ステップ間でこれ以上動いたら補わない（キックオフの配置換えなど）
+const LERP_JUMP = 120 * S;
 let last = performance.now();
 
 // ---------------------------------------------------------------- haptics
@@ -275,9 +285,9 @@ function frame(now) {
   if (versus) {
     // 試合の正解はサーバーが持つ。手元では同じ固定ステップで先に進めて（予測）、
     // 届いた状態で答え合わせをしたものを描く。
+    let steps = 0;
     if (running) {
       acc += dt;
-      let steps = 0;
       while (acc >= STEP && steps < MAX_STEPS) {
         acc -= STEP;
         steps++;
@@ -288,6 +298,7 @@ function frame(now) {
       acc = 0;
     }
     net.apply(state, dt);
+    if (running && steps > 0) capturePositions();
   } else if (running) {
     if (fx.hitstop > 0) {
       // ヒットストップ中は物理を止める。演出だけ進む。
@@ -299,21 +310,74 @@ function frame(now) {
         acc -= STEP;
         steps++;
         tick(STEP);
+        capturePositions();
       }
       if (steps === MAX_STEPS) acc = 0;
     }
   }
 
+  const stepped = versus ? running : (running && fx.hitstop <= 0);
+  updateView(stepped ? acc / STEP : 1);
+
   watchPhase();
   FX.updateEffects(fx, dt);
-  renderer.updateCamera(state, dt, snapCamera);
+  renderer.updateCamera(view, dt, snapCamera);
   snapCamera = false;
   audio.setHeat(heatRatio(state));
   ui.setScore(state.score[myTeam()], state.score[1 - myTeam()]);
   ui.setMatchPoint(isMatchPoint(state) && state.phase !== PHASE.OVER);
   if (versus) showNetInfo(now);
 
-  renderer.draw(state, fx, input);
+  renderer.draw(view, fx, input);
+}
+
+/** いまの state をステップ境界の位置として記録する（ステップを進めた直後に呼ぶ）。 */
+function capturePositions() {
+  const n = state.units.length + 1;
+  if (posCur.length !== n * 2) {
+    posPrev = new Float64Array(n * 2);
+    posCur = new Float64Array(n * 2);
+    writePositions(posCur);
+  }
+  posPrev.set(posCur);
+  writePositions(posCur);
+}
+
+function writePositions(arr) {
+  arr[0] = state.ball.x; arr[1] = state.ball.y;
+  for (let i = 0; i < state.units.length; i++) {
+    arr[2 + i * 2] = state.units[i].x;
+    arr[3 + i * 2] = state.units[i].y;
+  }
+}
+
+/** 描画用の view を作る。alpha = 直近ステップからの経過（0〜1）。 */
+function updateView(alpha) {
+  for (const k in state) {
+    if (k !== 'units' && k !== 'ball') view[k] = state[k];
+  }
+  view.units.length = state.units.length;
+  for (let i = 0; i < state.units.length; i++) {
+    view.units[i] = Object.assign(view.units[i] || {}, state.units[i]);
+  }
+  Object.assign(view.ball, state.ball);
+
+  // 止まっているときはそのまま描く。記録も捨て、再開したら記録し直す
+  // （前の試合やリセット前の位置から補わないように）
+  const n = state.units.length + 1;
+  if (alpha >= 1) { if (posCur.length) posCur = new Float64Array(0); return; }
+  if (posCur.length !== n * 2) return;
+  const lerp = (obj, i) => {
+    const px = posPrev[i * 2], py = posPrev[i * 2 + 1];
+    const cx = posCur[i * 2], cy = posCur[i * 2 + 1];
+    if (Math.abs(cx - px) + Math.abs(cy - py) > LERP_JUMP) return;
+    // 記録した位置からの差（対人戦の答え合わせによるずれ）は保ったまま、
+    // 時間ぶんだけ前のステップへ戻す
+    obj.x += (px - cx) * (1 - alpha);
+    obj.y += (py - cy) * (1 - alpha);
+  };
+  lerp(view.ball, 0);
+  for (let i = 0; i < view.units.length; i++) lerp(view.units[i], i + 1);
 }
 
 function tick(dt) {

@@ -33,7 +33,7 @@ const HARD_QUEUE = 120;
 const NO_INTENT = { move: { x: 0, y: 0 }, flick: null };
 
 /**
- * outs[team] = { send(text), open, buffered } … チームごとの送り先。
+ * outs[team] = { send(text, mustArrive), open, buffered } … チームごとの送り先。
  * 送り先は差し替えられる（outs をあとから書き換えてよい）。
  */
 export function createMatch(outs) {
@@ -114,11 +114,14 @@ export function createMatch(outs) {
       if (!out || !out.open) continue;
       if (out.buffered > MAX_BUFFERED) continue;   // 詰まっている。イベントは次で送る
       let text = base;
-      if (p.events.length) {
+      const hasEvents = p.events.length > 0;
+      if (hasEvents) {
         text = base.slice(0, -1) + ',"ev":' + JSON.stringify(p.events) + '}';
         p.events = [];
       }
-      try { out.send(text); } catch (_) {}
+      // 2つ目の引数は「落としてはいけないか」。直結では、イベントのない状態は
+      // 届かなくてもよい経路で送る（次の状態が丸ごと上書きするので）
+      try { out.send(text, hasEvents); } catch (_) {}
     }
   }
 

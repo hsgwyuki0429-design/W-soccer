@@ -81,7 +81,9 @@ export function createRenderer(canvas) {
   }
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // 3倍の画面でも2倍で描く。見た目はほとんど変わらず、塗る画素が半分以下になり
+    // 1フレームにかかる時間が減る（スマホで描画が間に合わずカクつくのを防ぐ）
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = canvas.clientWidth || window.innerWidth;
     const h = canvas.clientHeight || window.innerHeight;
     canvas.width = Math.round(w * dpr);
@@ -189,6 +191,8 @@ export function createRenderer(canvas) {
     ctx.scale(sc, sc);
     if (flip) ctx.rotate(Math.PI);
     ctx.translate(-cam.x, -cam.y);
+    shadowView.sc = sc;
+    shadowView.flip = flip;
 
     drawTurf(ctx);
     drawGoals(ctx, s);
@@ -336,15 +340,11 @@ function drawUnits(ctx, s, fx, input, mine, screenOrder, colorOf) {
     const stunned = u.stunT > 0;
 
     // 盤面から数ミリ浮かせるだけのソフトシャドウ
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.38)';
-    ctx.shadowBlur = 12 * S;
-    ctx.shadowOffsetY = 5 * S;
+    drawShadow(ctx, u.x, u.y, r, 12 * S, 5 * S, 0.38);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(u.x, u.y, r, 0, Math.PI * 2);
     ctx.fill();
-    ctx.restore();
 
     // 内側のわずかな締め
     ctx.strokeStyle = 'rgba(0,0,0,0.14)';
@@ -428,15 +428,53 @@ function drawBall(ctx, s, fx) {
   ctx.arc(b.x, b.y, glowR, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 8 * S;
-  ctx.shadowOffsetY = 3 * S;
+  drawShadow(ctx, b.x, b.y, r, 8 * S, 3 * S, 0.35);
   ctx.fillStyle = rgba(c, 1);
   ctx.beginPath();
   ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
+}
+
+// ---------------------------------------------------------------- shadows
+
+// 駒とボールの影。shadowBlur は毎フレーム描くと重い（特に iOS Safari）ので、
+// ぼかした円を一度だけ別のキャンバスに描いておき、それを貼る。
+// ぼかし幅と下へのずらし幅は、shadowBlur と同じく画面の画素で決まる。
+const shadowView = { sc: 1, flip: false };
+const shadowCache = new Map();
+
+function shadowSprite(rDev, blur, alpha) {
+  const key = `${Math.round(rDev)}|${blur.toFixed(1)}|${alpha}`;
+  let sp = shadowCache.get(key);
+  if (sp) return sp;
+  if (shadowCache.size > 24) shadowCache.clear();   // ズームで大きさが変わり続けても溜めない
+  const R = Math.max(1, Math.round(rDev));
+  const pad = Math.ceil(blur * 1.5) + 2;
+  const n = (R + pad) * 2;
+  const c = typeof OffscreenCanvas === 'function'
+    ? new OffscreenCanvas(n, n)
+    : Object.assign(document.createElement('canvas'), { width: n, height: n });
+  const g = c.getContext('2d');
+  // 円そのものは外に描き、影だけを中に落とす
+  g.shadowColor = `rgba(0,0,0,${alpha})`;
+  g.shadowBlur = blur;
+  g.shadowOffsetX = n * 2;
+  g.fillStyle = '#000';
+  g.beginPath();
+  g.arc(n / 2 - n * 2, n / 2, R, 0, Math.PI * 2);
+  g.fill();
+  sp = { canvas: c, n, R };
+  shadowCache.set(key, sp);
+  return sp;
+}
+
+/** 世界座標 (x, y)・半径 r の円の影を描く。blur・off は画面の画素（S倍済みの設計値）。 */
+function drawShadow(ctx, x, y, r, blur, off, alpha) {
+  const sc = shadowView.sc;
+  const sp = shadowSprite(r * sc, blur, alpha);
+  const size = sp.n * (r / sp.R);              // 画素 → 世界座標
+  const dy = (shadowView.flip ? -off : off) / sc;   // 影は常に画面の下へ落ちる
+  ctx.drawImage(sp.canvas, x - size / 2, y + dy - size / 2, size, size);
 }
 
 function drawTrail(ctx, fx) {

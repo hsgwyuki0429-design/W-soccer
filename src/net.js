@@ -10,6 +10,11 @@
 //
 // 相手の入力は届かないので、最後に分かっている移動入力を続けているものとして予測する。
 //
+// 同じWi-Fiにいる相手とは、サーバーを経由せず端末どうしで直結（WebRTC）する。
+// そのときは片方（ホスト＝チーム0）の端末が match.js で試合を進め、もう片方へ配る。
+// やりとりの中身はサーバー経由と同じなので、予測・答え合わせはそのまま使う。
+// 直結を試すのはマッチングのあと・試合の前だけで、つながらなければサーバー経由で始める。
+//
 // イベント（音・演出）は二重に鳴らないよう、出どころを種類で分ける：
 //   - 自分の操作で起きるもの・物理の反応 → 手元の予測から即座に出す
 //   - 相手の踏み込み／キック／体当たり、ゴール・キックオフ・決着 → サーバーから出す
@@ -17,6 +22,7 @@
 import { CONFIG } from './config.js';
 import { createState, step } from './game.js';
 import { decodeState, copyState } from './snapshot.js';
+import { createMatch } from './match.js';
 
 const STEP = 1 / 60;
 const MAX_PENDING = 180;     // 未確認の入力をこれ以上は抱えない（3秒）
@@ -37,6 +43,19 @@ const PING_MS = 1000;        // 往復時間を測る間隔
 
 const SERVER_ONLY = new Set(['goal', 'kickoff', 'matchend']);
 
+// 直結を試す時間。同じWi-Fiならたいてい1秒もかからない
+const LINK_MS = 3500;
+// サーバーが「直結で始める」と言ってきたのに、こちらの直結がまだ開いていないとき待つ時間
+const OPEN_WAIT_MS = 2500;
+// 直結の相手からこれだけ何も届かなければ、切れたものとする
+// （Wi-Fiから外れても、直結が閉じたと分かるまでには時間がかかる）
+const PEER_SILENCE_MS = 5000;
+// STUN/TURN は使わない。端末自身のアドレスどうしでしかつながらないので、
+// 実質「同じネットワークにいるときだけ」直結になる
+const RTC_CONFIG = { iceServers: [] };
+
+const canDirect = () => typeof RTCPeerConnection === 'function';
+
 export function createNet() {
   let ws = null;
   let status = 'idle';       // idle | connecting | waiting | playing | gone | error
@@ -52,6 +71,17 @@ export function createNet() {
   const offsets = { units: sim.units.map(() => ({ x: 0, y: 0 })), ball: { x: 0, y: 0 } };
   let rtt = -1;                       // 通信の往復時間（ms）。未計測は -1
   let pingTimer = null;
+
+  // 試合の正解をどこからもらうか： server（サーバー経由） | host（自分が進める） | guest（直結の相手から）
+  let mode = 'server';
+  let pc = null;                      // RTCPeerConnection
+  let dc = null;                      // RTCDataChannel
+  let remoteCands = null;             // 相手の接続情報が来る前に届いた候補（来たら入れる）
+  let linkTimer = null;
+  let match = null;                   // ホストのときだけ。試合そのもの
+  let hostTimer = null;
+  let hostLast = 0;
+  let peerAt = 0;                     // 直結の相手から最後に何か届いた時刻
 
   const mine = (unitIndex) => (unitIndex >> 1) === myTeam;
 
@@ -81,6 +111,7 @@ export function createNet() {
     moves = [[0, 0], [0, 0], [0, 0], [0, 0]];
     serverEvents = [];
     rtt = -1;
+    peerAt = performance.now();
     for (const o of offsets.units) o.x = o.y = 0;
     offsets.ball.x = offsets.ball.y = 0;
   }
@@ -124,6 +155,177 @@ export function createNet() {
     if (Math.hypot(offsets.ball.x, offsets.ball.y) > TELEPORT) offsets.ball.x = offsets.ball.y = 0;
   }
 
+  /** 試合の正解を持つ側へ送る。 */
+  function toAuthority(obj) {
+    if (mode === 'host') { match.receive(myTeam, obj); return; }
+    if (mode === 'guest') { dcSend(obj); return; }
+    wsSend(obj);
+  }
+
+  function wsSend(obj) {
+    if (ws && ws.readyState === 1) {
+      try { ws.send(JSON.stringify(obj)); } catch (_) {}
+    }
+  }
+
+  function dcSend(obj) {
+    if (dc && dc.readyState === 'open') {
+      try { dc.send(JSON.stringify(obj)); } catch (_) {}
+    }
+  }
+
+  /** 正解を持つ側から届いたもの（状態・往復時間）。 */
+  function fromAuthority(m) {
+    if (m.t === 's') {
+      if (!m.s || !Array.isArray(m.s.u)) return;
+      latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
+      if (m.ev) for (const ev of m.ev) if (fromServer(ev)) serverEvents.push(ev);
+    } else if (m.t === 'P') {
+      const r = performance.now() - Number(m.c);
+      if (r >= 0 && r < 10000) rtt = rtt < 0 ? r : rtt * 0.7 + r * 0.3;
+    }
+  }
+
+  function ping() {
+    const msg = { t: 'p', c: performance.now() };
+    if (mode === 'server') wsSend(msg);
+    else dcSend(msg);   // 直結中は相手との往復を測る
+  }
+
+  // ---------------------------------------------------------- 直結（WebRTC）
+
+  /** マッチングできた。サーバーに仲立ちしてもらいながら直結を試す。 */
+  function startLink(team) {
+    closeLink();
+    myTeam = team;
+    remoteCands = [];
+    try {
+      pc = new RTCPeerConnection(RTC_CONFIG);
+    } catch (_) {
+      pc = null;
+      if (team === 0) wsSend({ t: 'mode', p2p: false });
+      return;
+    }
+    pc.onicecandidate = (e) => {
+      if (e.candidate) wsSend({ t: 'rtc', d: { c: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
+    };
+    if (team === 0) {
+      // ホスト。状態は毎回丸ごと送るが、入力（踏み込み）は落とせないので確実に届く設定にする
+      bindChannel(pc.createDataChannel('g', { ordered: true }));
+      pc.createOffer()
+        .then((o) => pc && pc.setLocalDescription(o))
+        .then(() => pc && wsSend({ t: 'rtc', d: { sdp: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription } }))
+        .catch(() => giveUpLink());
+      linkTimer = setTimeout(giveUpLink, LINK_MS);
+    } else {
+      pc.ondatachannel = (e) => bindChannel(e.channel);
+    }
+  }
+
+  function giveUpLink() {
+    if (myTeam !== 0 || !pc) return;
+    if (dc && dc.readyState === 'open') return;
+    closeLink();
+    wsSend({ t: 'mode', p2p: false });
+  }
+
+  function bindChannel(ch) {
+    dc = ch;
+    dc.onopen = () => {
+      peerAt = performance.now();
+      if (myTeam === 0 && mode === 'server' && status === 'waiting') {
+        clearTimeout(linkTimer);
+        wsSend({ t: 'mode', p2p: true });
+      }
+    };
+    dc.onclose = peerGone;
+    dc.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (!m || typeof m !== 'object') return;
+      peerAt = performance.now();
+      switch (m.t) {
+        case 'p': dcSend({ t: 'P', c: Number(m.c) || 0 }); break;
+        case 'bye': peerGone(); break;
+        case 'i':
+        case 'restart':
+          if (mode === 'host') match.receive(1 - myTeam, m);
+          break;
+        default:
+          if (mode === 'guest' || m.t === 'P') fromAuthority(m);
+      }
+    };
+  }
+
+  function onSignal(d) {
+    if (!pc || !d || typeof d !== 'object') return;
+    if (d.sdp) {
+      pc.setRemoteDescription(d.sdp)
+        .then(() => {
+          for (const c of remoteCands) pc.addIceCandidate(c).catch(() => {});
+          remoteCands = null;
+          if (d.sdp.type !== 'offer') return;
+          return pc.createAnswer()
+            .then((a) => pc.setLocalDescription(a))
+            .then(() => wsSend({ t: 'rtc', d: { sdp: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription } }));
+        })
+        .catch(() => {});
+    } else if (d.c) {
+      if (remoteCands) remoteCands.push(d.c);
+      else pc.addIceCandidate(d.c).catch(() => {});
+    }
+  }
+
+  /** 直結で試合を始める。ホストなら自分の端末で試合を進める。 */
+  function beginDirect() {
+    mode = myTeam === 0 ? 'host' : 'guest';
+    reset();
+    if (mode === 'host') {
+      const outs = [null, null];
+      // 自分の分はその場で受け取る（通信なし）
+      outs[myTeam] = { open: true, buffered: 0, send: (text) => fromAuthority(JSON.parse(text)) };
+      outs[1 - myTeam] = {
+        get open() { return !!dc && dc.readyState === 'open'; },
+        get buffered() { return dc ? dc.bufferedAmount : 0; },
+        send: (text) => dc.send(text),
+      };
+      match = createMatch(outs);
+      hostLast = performance.now();
+      hostTimer = setInterval(() => {
+        const now = performance.now();
+        const dt = (now - hostLast) / 1000;
+        hostLast = now;
+        match.advance(dt);
+      }, 1000 / 60);
+    }
+    setStatus('playing', { team: myTeam, direct: true });
+  }
+
+  /** 直結の相手がいなくなった。 */
+  function peerGone() {
+    if (mode === 'server' || status !== 'playing') return;
+    closeLink();
+    setStatus('gone');
+  }
+
+  function closeLink() {
+    clearTimeout(linkTimer);
+    clearInterval(hostTimer);
+    hostTimer = null;
+    match = null;
+    if (dc) {
+      dc.onopen = dc.onclose = dc.onmessage = null;
+      try { dc.close(); } catch (_) {}
+    }
+    if (pc) {
+      pc.onicecandidate = pc.ondatachannel = null;
+      try { pc.close(); } catch (_) {}
+    }
+    dc = pc = null;
+    remoteCands = null;
+    mode = 'server';
+  }
+
   const clone = (it) => ({
     move: { x: it.move.x, y: it.move.y },
     flick: it.flick ? { x: it.flick.x, y: it.flick.y } : null,
@@ -135,10 +337,19 @@ export function createNet() {
     get pending() { return pending.length; },
     /** 通信の往復時間（ms）。まだ測れていなければ -1 */
     get rtt() { return rtt; },
+    /** 同じWi-Fiで直結しているか */
+    get direct() { return mode !== 'server'; },
     on(kind, fn) { listeners[kind].push(fn); },
 
     connect() {
       if (ws && (status === 'connecting' || status === 'waiting' || status === 'playing')) return;
+      // 前の対戦の残り（直結で遊んだあとはサーバーとの接続が開いたまま）を片付ける
+      closeLink();
+      if (ws) {
+        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+        try { ws.close(); } catch (_) {}
+        ws = null;
+      }
       reset();
       setStatus('connecting');
       try {
@@ -148,19 +359,17 @@ export function createNet() {
         return;
       }
       ws.onopen = () => {
-        ws.send(JSON.stringify({ t: 'join' }));
-        const ping = () => {
-          if (ws && ws.readyState === 1) {
-            try { ws.send(JSON.stringify({ t: 'p', c: performance.now() })); } catch (_) {}
-          }
-        };
+        wsSend({ t: 'join', rtc: canDirect() });
         ping();
         clearInterval(pingTimer);
         pingTimer = setInterval(ping, PING_MS);
       };
       ws.onerror = () => { if (status !== 'playing') setStatus('error'); };
       ws.onclose = () => {
+        // 直結で遊んでいる最中は、サーバーとの接続が切れても試合は続けられる
+        if (mode !== 'server' && status === 'playing') return;
         clearInterval(pingTimer);
+        closeLink();
         if (status === 'playing' || status === 'waiting') setStatus('gone');
       };
       ws.onmessage = (e) => {
@@ -168,21 +377,39 @@ export function createNet() {
         try { m = JSON.parse(e.data); } catch (_) { return; }
         switch (m.t) {
           case 'wait': setStatus('waiting'); break;
+          case 'pair':
+            if (canDirect()) startLink(m.team | 0);
+            setStatus('waiting', { linking: true });
+            break;
+          case 'rtc': onSignal(m.d); break;
           case 'start':
             myTeam = m.team | 0;
+            if (m.p2p) {
+              if (dc && dc.readyState === 'open') { beginDirect(); break; }
+              // 相手側では開いたが、こちらはまだ。少しだけ待つ
+              const t0 = performance.now();
+              const wait = setInterval(() => {
+                if (status !== 'waiting') { clearInterval(wait); return; }
+                if (dc && dc.readyState === 'open') { clearInterval(wait); beginDirect(); return; }
+                if (performance.now() - t0 > OPEN_WAIT_MS) { clearInterval(wait); closeLink(); setStatus('gone'); }
+              }, 50);
+              break;
+            }
+            closeLink();
             reset();
             setStatus('playing', { team: myTeam });
             break;
-          case 'gone': setStatus('gone'); break;
-          case 'P': {
-            const r = performance.now() - Number(m.c);
-            if (r >= 0 && r < 10000) rtt = rtt < 0 ? r : rtt * 0.7 + r * 0.3;
+          case 'gone':
+            // 直結中の退出は直結のほうで分かる
+            if (mode !== 'server' && status === 'playing') break;
+            closeLink();
+            setStatus('gone');
             break;
-          }
+          case 'P':
+            if (mode === 'server') fromAuthority(m);
+            break;
           case 's':
-            if (!m.s || !Array.isArray(m.s.u)) break;
-            latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
-            if (m.ev) for (const ev of m.ev) if (fromServer(ev)) serverEvents.push(ev);
+            if (mode === 'server') fromAuthority(m);
             break;
         }
       };
@@ -190,6 +417,8 @@ export function createNet() {
 
     disconnect() {
       clearInterval(pingTimer);
+      dcSend({ t: 'bye' });
+      closeLink();
       if (ws) {
         try { ws.send(JSON.stringify({ t: 'leave' })); } catch (_) {}
         try { ws.close(); } catch (_) {}
@@ -200,9 +429,7 @@ export function createNet() {
     },
 
     restart() {
-      if (ws && status === 'playing') {
-        try { ws.send(JSON.stringify({ t: 'restart' })); } catch (_) {}
-      }
+      if (status === 'playing') toAuthority({ t: 'restart' });
     },
 
     /**
@@ -210,7 +437,8 @@ export function createNet() {
      * a = 駒番号の小さい側、b = 大きい側（世界座標の向き）。
      */
     tick(a, b) {
-      if (!ws || status !== 'playing' || ws.readyState !== 1) return;
+      if (status !== 'playing') return;
+      if (mode === 'server' && (!ws || ws.readyState !== 1)) return;
       const pa = clone(a), pb = clone(b);
       seq++;
       const pack = (it) => [
@@ -218,9 +446,7 @@ export function createNet() {
         it.flick ? it.flick.x : null,
         it.flick ? it.flick.y : null,
       ];
-      try {
-        ws.send(JSON.stringify({ t: 'i', n: seq, a: pack(pa), b: pack(pb) }));
-      } catch (_) {}
+      toAuthority({ t: 'i', n: seq, a: pack(pa), b: pack(pb) });
       pending.push({ seq, a: pa, b: pb });
       if (pending.length > MAX_PENDING) pending.shift();
 
@@ -233,6 +459,10 @@ export function createNet() {
      * 答え合わせのずれは dt をかけて少しずつ消す。
      */
     apply(state, dt) {
+      if (mode !== 'server' && status === 'playing' && performance.now() - peerAt > PEER_SILENCE_MS) {
+        peerGone();
+        return false;
+      }
       if (latest) reconcile();
       if (serverEvents.length) {
         const evs = serverEvents;

@@ -102,8 +102,12 @@ function leaveVersus() {
   FX.clearEffects(fx);
 }
 
-net.on('status', (st) => {
-  if (st === 'waiting') { ui.showWaiting(); return; }
+net.on('status', (st, info) => {
+  if (st === 'waiting') {
+    if (info && info.linking) ui.showLinking();
+    else ui.showWaiting();
+    return;
+  }
   if (st === 'error') {
     // 一度も繋がっていない失敗。よくある原因はホスティング側が
     // WebSocket を持っていないこと（例：GitHub Pages は静的配信のみ）。
@@ -357,7 +361,9 @@ function showNetInfo(now) {
   if (now - netInfoAt < 500) return;
   netInfoAt = now;
   const r = net.rtt;
-  ui.setNetInfo(r < 0 ? '対人戦 · 通信 測定中' : `対人戦 · 通信 ${Math.round(r)}ms`);
+  // 同じWi-Fiで直結しているときは、そうと分かるように出す
+  const label = net.direct ? '対人戦 · Wi-Fi直結' : '対人戦 · 通信';
+  ui.setNetInfo(r < 0 ? `${label} 測定中` : `${label} ${Math.round(r)}ms`);
 }
 
 // フェーズの変わり目を1か所で見る。対人戦では tick のあとにサーバーの状態へ

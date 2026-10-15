@@ -59,6 +59,16 @@ html, body {
     inset 0 0.5px 0 rgba(255, 255, 255, 0.16);
 }
 
+/* 試合中も出ている HUD とバナーは、背後のキャンバスが毎フレーム描き変わる。
+   backdrop-filter のぼかしはそのたびに計算し直しになり、スマホでは描画が
+   間に合わずカクつく原因になる。この2つだけはぼかさず、少し濃い地で同じ見た目に寄せる。 */
+#hud.glass,
+.banner-card.glass {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgba(20, 26, 23, 0.8);
+}
+
 /* ---------------------------------------------------------- HUD */
 
 /* フィールド上端（ゴールネットの上）までの帯にスコアを収める。
@@ -171,9 +181,16 @@ html, body {
   background: rgba(6, 16, 12, 0.34);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
-  transition: opacity 0.34s var(--spring);
+  transition: opacity 0.34s var(--spring), visibility 0s linear 0s;
 }
-#overlay.hidden { opacity: 0; pointer-events: none; }
+/* 透明にするだけだと、画面全体を覆うぼかしが試合中も残り、毎フレーム計算される。
+   消え終わったら visibility で描画からも外す。 */
+#overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.34s var(--spring), visibility 0s linear 0.34s;
+}
 
 #ov-cpu { margin: calc(var(--u) * 14) 0; }
 #ov-cpu[hidden], #cpu-tag[hidden] { display: none; }

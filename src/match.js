@@ -29,6 +29,13 @@ const TRIM_WINDOW = 30;
 const MAX_BUFFERED = 32 * 1024;
 // 異常に送りつけられても、抱える入力はここまで（古いものから捨てる）
 const HARD_QUEUE = 120;
+// 入力が間に合わなかったステップは、直前の移動で進めたうえで「その番号の入力は使った」
+// ことにする（先借り）。遅れて届いた入力は二重に使わない。
+// こうしないと、遅れた入力のぶん駒が1ステップ余計に進み、あとで捨てて戻すことになり、
+// 本人の画面では予測とずれて駒がワープする。画面が120Hzの端末は、ステップを進める
+// フレームが偶数・奇数で入れ替わるので入力の届く間隔が揺れやすく、特によく起きていた。
+// 先借りはこのステップ数まで（通信が止まった相手の入力を延々と先取りしない）。
+const MAX_BORROW = 4;
 
 const NO_INTENT = { move: { x: 0, y: 0 }, flick: null };
 
@@ -47,6 +54,8 @@ export function createMatch(outs) {
     last: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
     minQueue: Infinity,   // TRIM_WINDOW のあいだに見た、溜まっていた入力の最小数
     queueTicks: 0,
+    borrowed: 0,          // 先借りして、まだ届いていない入力の数
+    carry: [null, null],  // 先借りした入力に載っていたフリック。次のステップで使う
     events: [],           // まだこのチームへ送れていないイベント
   }));
   let seq = 0;
@@ -56,7 +65,20 @@ export function createMatch(outs) {
   function readIntents(team, msg) {
     const p = players[team];
     const n = Number(msg.n);
-    if (!Number.isInteger(n) || n <= p.ack) return;
+    if (!Number.isInteger(n)) return;
+    if (n <= p.ack) {
+      // 先借りしたステップの入力が遅れて届いた。移動は直前のもので済ませたので、
+      // フリック（踏み込み）だけ次のステップへ回し、移動は以後の先借りに使う
+      if (p.borrowed > 0 && n > p.ack - p.borrowed) {
+        p.borrowed--;
+        const a = readSlot(msg.a), b = readSlot(msg.b);
+        if (a.flick && !p.carry[0]) p.carry[0] = a.flick;
+        if (b.flick && !p.carry[1]) p.carry[1] = b.flick;
+        p.last[0].x = a.move.x; p.last[0].y = a.move.y;
+        p.last[1].x = b.move.x; p.last[1].y = b.move.y;
+      }
+      return;
+    }
     const q = p.queue;
     if (q.length && n <= q[q.length - 1].n) return;   // 古い・重複した入力
     q.push({ n, a: readSlot(msg.a), b: readSlot(msg.b) });
@@ -79,14 +101,27 @@ export function createMatch(outs) {
     }
 
     const inp = q.shift();
+    let out;
     if (!inp) {
       // まだ届いていない。直前の移動を続ける（止めるとカクつく）
-      return [{ move: { ...p.last[0] }, flick: null }, { move: { ...p.last[1] }, flick: null }];
+      out = [{ move: { ...p.last[0] }, flick: null }, { move: { ...p.last[1] }, flick: null }];
+      if (p.borrowed < MAX_BORROW) {
+        // 次の番号の入力を使ったことにする（届いたら二重に使わない）
+        p.borrowed++;
+        p.ack++;
+      }
+    } else {
+      p.ack = inp.n;
+      p.borrowed = 0;
+      p.last[0].x = inp.a.move.x; p.last[0].y = inp.a.move.y;
+      p.last[1].x = inp.b.move.x; p.last[1].y = inp.b.move.y;
+      out = [inp.a, inp.b];
     }
-    p.ack = inp.n;
-    p.last[0].x = inp.a.move.x; p.last[0].y = inp.a.move.y;
-    p.last[1].x = inp.b.move.x; p.last[1].y = inp.b.move.y;
-    return [inp.a, inp.b];
+    for (let i = 0; i < 2; i++) {
+      if (p.carry[i] && !out[i].flick) out[i] = { move: out[i].move, flick: p.carry[i] };
+      p.carry[i] = null;
+    }
+    return out;
   }
 
   /** 最も古い入力を使わずに捨てる。フリックは次の入力へ引き継ぐ。 */
@@ -98,6 +133,7 @@ export function createMatch(outs) {
       if (old.b.flick && !q[0].b.flick) q[0].b.flick = old.b.flick;
     }
     p.ack = old.n;
+    p.borrowed = 0;
   }
 
   function broadcast() {
@@ -125,6 +161,20 @@ export function createMatch(outs) {
     }
   }
 
+  function stepOnce() {
+    const intents = [null, null, null, null];
+    for (const p of players) {
+      const [a, b] = takeIntents(p);
+      intents[p.team * 2] = a;
+      intents[p.team * 2 + 1] = b;
+    }
+    for (let i = 0; i < 4; i++) if (!intents[i]) intents[i] = NO_INTENT;
+    moves = intents.map((it) => [r2(it.move.x), r2(it.move.y)]);
+
+    const evs = step(state, intents, TICK);
+    for (const p of players) for (const e of evs) p.events.push(e);
+  }
+
   return {
     state,
     outs,
@@ -144,20 +194,14 @@ export function createMatch(outs) {
       while (acc >= TICK && steps < 5) {
         acc -= TICK;
         steps++;
-
-        const intents = [null, null, null, null];
-        for (const p of players) {
-          const [a, b] = takeIntents(p);
-          intents[p.team * 2] = a;
-          intents[p.team * 2 + 1] = b;
-        }
-        for (let i = 0; i < 4; i++) if (!intents[i]) intents[i] = NO_INTENT;
-        moves = intents.map((it) => [r2(it.move.x), r2(it.move.y)]);
-
-        const evs = step(state, intents, TICK);
-        for (const p of players) for (const e of evs) p.events.push(e);
+        stepOnce();
       }
       if (steps > 0) broadcast();
+    },
+    /** ちょうど1ステップ進めて配る（直結のホストが、自分のステップに合わせて呼ぶ）。 */
+    step() {
+      stepOnce();
+      broadcast();
     },
   };
 }

@@ -242,3 +242,41 @@ test('同じWi-Fiの直結：両者が対応していれば接続情報を中継
     await new Promise((r) => server.close(r));
   }
 });
+
+test('入力の届く間隔が揺れても（0個・2個・0個…）、駒は送った入力の数だけ進み、遅れた踏み込みも消えない', async () => {
+  const { createMatch } = await import('../src/match.js');
+  const got = [];
+  const out = { open: true, buffered: 0, send: (text) => got.push(JSON.parse(text)) };
+  const m = createMatch([out, { open: false, buffered: 0, send() {} }]);
+  m.state.phase = PHASE.PLAY;
+  const run = [0, -1, null, null];
+  let n = 0;
+  const send = (flick = null) => {
+    n++;
+    m.receive(0, { t: 'i', n, a: [run[0], run[1], flick ? flick[0] : null, flick ? flick[1] : null], b: [0, 0, null, null] });
+  };
+
+  // 同じ入力を手元で素直に進めたもの（＝送った側の予測）
+  const ref = createState();
+  ref.phase = PHASE.PLAY;
+  const refStep = (flick) => step(ref, [{ move: { x: 0, y: -1 }, flick }, null, null, null], DT);
+
+  send(); m.step(); refStep(null);
+  let dashed = false;
+  for (let t = 0; t < 40; t++) {
+    // 偶数ステップは入力が間に合わず、奇数ステップで2つまとめて届く
+    if (t % 2 === 1) {
+      send(t === 21 ? [0, -1] : null);   // 遅れて届く入力に踏み込みを載せる
+      send();
+    }
+    m.step();
+    if (m.state.units[0].dashT > 0) dashed = true;
+  }
+  for (let t = 0; t < 40; t++) refStep(t === 20 ? { x: 0, y: -1 } : null);
+  // 届いた入力はすべて使った扱いになっている（未確認の入力が溜まり続けない）
+  assert.equal(got[got.length - 1].k[0], n);
+  // 1ステップ余計に進んだり、戻されたりしていない
+  const u = m.state.units[0], r = ref.units[0];
+  assert.ok(Math.abs(u.y - r.y) < 30 * S, `送った入力の数と進んだ距離が合う (${(u.y - r.y).toFixed(1)})`);
+  assert.ok(dashed, '遅れて届いた踏み込みも出る');
+});

@@ -81,8 +81,6 @@ export function createNet() {
   let remoteCands = null;             // 相手の接続情報が来る前に届いた候補（来たら入れる）
   let linkTimer = null;
   let match = null;                   // ホストのときだけ。試合そのもの
-  let hostTimer = null;
-  let hostLast = 0;
   let peerAt = 0;                     // 直結の相手から最後に何か届いた時刻
 
   const mine = (unitIndex) => (unitIndex >> 1) === myTeam;
@@ -318,14 +316,9 @@ export function createNet() {
           else dc.send(text);
         },
       };
+      // 試合はタイマーではなく、自分のステップ（tick）に合わせて1つずつ進める。
+      // 自分の入力は必ずそのステップに間に合うので、自分の駒の予測が外れない
       match = createMatch(outs);
-      hostLast = performance.now();
-      hostTimer = setInterval(() => {
-        const now = performance.now();
-        const dt = (now - hostLast) / 1000;
-        hostLast = now;
-        match.advance(dt);
-      }, 1000 / 60);
     }
     setStatus('playing', { team: myTeam, direct: true });
   }
@@ -339,8 +332,6 @@ export function createNet() {
 
   function closeLink() {
     clearTimeout(linkTimer);
-    clearInterval(hostTimer);
-    hostTimer = null;
     match = null;
     if (dc) {
       dc.onopen = dc.onclose = dc.onmessage = null;
@@ -481,6 +472,7 @@ export function createNet() {
         it.flick ? it.flick.y : null,
       ];
       toAuthority({ t: 'i', n: seq, a: pack(pa), b: pack(pb) });
+      if (mode === 'host') match.step();
       pending.push({ seq, a: pa, b: pb });
       if (pending.length > MAX_PENDING) pending.shift();
 

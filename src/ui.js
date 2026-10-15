@@ -199,6 +199,13 @@ export function createUI(onPrimary, onCancel = () => {}) {
       lockUntil = performance.now() + 450;
     },
 
+    /** 相手は見つかった。同じWi-Fiなら直結しようとしているところ。 */
+    showLinking() {
+      this.showWaiting();
+      ovTitle.textContent = '相手が見つかりました';
+      ovBody.innerHTML = '接続を準備しています…<br>同じWi-Fiなら直接つないで通信を速くします。';
+    },
+
     /** 対人戦の相手待ち */
     showWaiting() {
       ovKicker.textContent = '対人戦';

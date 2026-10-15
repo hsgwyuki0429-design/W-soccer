@@ -1,40 +1,23 @@
 // rooms.js — 対人戦のマッチングと権威サーバー。
 //
-// 試合はサーバー側だけで進める。クライアントから来るのは「意図」だけで、
-// 位置はサーバーが計算して配る。src/game.js をそのまま使う（純粋なので
-// Node でも同じものが動く）。これが「game.js をブラウザAPIから切り離す」
-// と決めた理由そのもの。
+// 試合はサーバー側で進める。クライアントから来るのは「意図」だけで、
+// 位置はサーバーが計算して配る。進め方そのものは src/match.js にあり、
+// ブラウザ（直結時のホスト）でも同じものが動く。
 //
-// クライアントは自分の入力で先に動かして（予測）、ここから届く状態で答え合わせをする。
-// そのために：
-//   - 入力には通し番号が付いてくる。1ステップにつき1つずつ順に使い、
-//     どこまで使ったか（ack）をスナップショットに載せて返す
-//   - スナップショットには step() が読む値をすべて載せる（再生できるように）
-//   - 相手の予測に使えるよう、各駒がいま受けている移動入力も載せる
+// 同じWi-Fiにいる2人は、サーバーを経由せず端末どうしで直結（WebRTC）できる。
+// 2人とも直結に対応していれば、試合を始める前にその仲立ちをする：
+//   1. 'pair' を送り、両者の接続情報（'rtc'）をそのまま相手へ中継する
+//   2. ホスト（チーム0）が結果を 'mode' で知らせてくる
+//   3. 直結できたなら、試合はホストの端末が進める。サーバーは進めない
+//      できなかったら（別のネットワークなど）、これまでどおりサーバーで進める
 
-import { createState, step, restart, PHASE } from '../src/game.js';
-import { encodeState } from '../src/snapshot.js';
+import { createMatch } from '../src/match.js';
 
-const TICK = 1 / 60;
-// 状態は進めるたびに（60Hz）配る。間引くと、そのぶん相手やボールの答え合わせが遅れる。
-// 溜めておく入力の上限（ステップ数）。これを超えたぶんは古い順に捨てて、
-// 通信が詰まったあとに遅れを抱えたまま進むことがないようにする。
-const MAX_QUEUE = 4;
-// 入力が「常にこれ以上」溜まっている状態が TRIM_WINDOW ステップ続いたら、1つ捨てて縮める。
-// 揺らぎで一度溜まった入力は、送る側と使う側が同じ速さなので自然には減らない。
-// 放っておくと、そのぶんずっとサーバーでの反映が遅れたままになる。
-const TRIM_ABOVE = 1;
-const TRIM_WINDOW = 30;
-// 送信待ちがこれを超えている相手には、状態を送らずに飛ばす（回線が細いときに遅れを積まない）。
-// 状態は毎回丸ごとなので、1つ飛ばしても次ので追いつける。
-const MAX_BUFFERED = 32 * 1024;
-// 異常に送りつけられても、抱える入力はここまで（古いものから捨てる）
-const HARD_QUEUE = 120;
+// 直結を試す時間の上限。ホストが返事をしなければサーバーで始める
+const NEGOTIATE_MS = 6000;
 
 const waiting = [];        // 相手待ちのクライアント
 const rooms = new Set();
-
-const NO_INTENT = { move: { x: 0, y: 0 }, flick: null };
 
 let nextId = 1;
 
@@ -44,14 +27,7 @@ export function handleConnection(conn) {
     conn,
     room: null,
     team: -1,
-    // 届いた入力（通し番号つき）。ステップごとに1つずつ使う
-    queue: [],
-    ack: 0,
-    // 入力が途切れたときに使い続ける、直近の移動入力（フリックは含めない）
-    last: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
-    minQueue: Infinity,   // TRIM_WINDOW のあいだに見た、溜まっていた入力の最小数
-    queueTicks: 0,
-    events: [],           // まだこのクライアントへ送れていないイベント
+    rtc: false,           // 直結を試せるクライアントか
   };
 
   conn.on('message', (text) => {
@@ -59,14 +35,25 @@ export function handleConnection(conn) {
     try { msg = JSON.parse(text); } catch (_) { return; }
     if (!msg || typeof msg !== 'object') return;
 
+    const room = client.room;
     switch (msg.t) {
-      case 'join': join(client); break;
-      case 'i': readIntents(client, msg); break;
+      case 'join':
+        client.rtc = msg.rtc === true;
+        join(client);
+        break;
+      case 'i':
       case 'restart':
-        if (client.room && client.room.state.phase === PHASE.OVER) {
-          restart(client.room.state);
-          for (const p of client.room.players) p.events.length = 0;
+        if (room && room.mode === 'server') room.match.receive(client.team, msg);
+        break;
+      case 'rtc':
+        // 接続情報の中継。中身は見ずに相手へ渡す（大きすぎるものは捨てる）
+        if (room && room.mode === 'nego' && text.length < 16384) {
+          const other = room.players[1 - client.team];
+          if (other.conn.open) send(other.conn, { t: 'rtc', d: msg.d });
         }
+        break;
+      case 'mode':
+        if (room && room.mode === 'nego' && client.team === 0) begin(room, msg.p2p === true);
         break;
       case 'leave': drop(client); break;
       // 通信の往復時間を測るためのもの。受け取った値をそのまま返す
@@ -98,148 +85,41 @@ function join(client) {
 
 function makeRoom(a, b) {
   const room = {
-    state: createState(),
     players: [a, b],
-    seq: 0,
-    acc: 0,
+    mode: 'nego',          // nego（直結を試し中） | server | p2p
+    match: null,
     timer: null,
-    last: process.hrtime.bigint(),
+    last: 0,
   };
   a.room = b.room = room;
   a.team = 0;
   b.team = 1;
-  for (const p of room.players) {
-    p.queue.length = 0;
-    p.ack = 0;
-    p.minQueue = Infinity;
-    p.queueTicks = 0;
-    p.events.length = 0;
-    p.last[0].x = p.last[0].y = p.last[1].x = p.last[1].y = 0;
-  }
   rooms.add(room);
 
-  for (const p of room.players) {
-    send(p.conn, { t: 'start', team: p.team });
-  }
-
-  room.timer = setInterval(() => tickRoom(room), 1000 / 60);
-}
-
-function readIntents(client, msg) {
-  if (!client.room) return;
-  const n = Number(msg.n);
-  if (!Number.isInteger(n) || n <= client.ack) return;
-  const q = client.queue;
-  if (q.length && n <= q[q.length - 1].n) return;   // 古い・重複した入力
-  q.push({ n, a: readSlot(msg.a), b: readSlot(msg.b) });
-  if (q.length > HARD_QUEUE) q.splice(0, q.length - HARD_QUEUE);
-}
-
-function readSlot(arr) {
-  if (!Array.isArray(arr)) return { move: { x: 0, y: 0 }, flick: null };
-  return {
-    move: { x: clamp1(arr[0]), y: clamp1(arr[1]) },
-    flick: (typeof arr[2] === 'number' && typeof arr[3] === 'number')
-      ? { x: clamp1(arr[2]), y: clamp1(arr[3]) }
-      : null,
-  };
-}
-
-/** このステップで使う2駒ぶんの意図を取り出す。 */
-function takeIntents(p) {
-  const q = p.queue;
-  // 溜まりすぎていたら古いものを捨てて追いつく。フリックだけは捨てずに次へ引き継ぐ
-  // （踏み込みが消えると「押したのに出ない」になる）。
-  while (q.length > MAX_QUEUE) skipOne(p);
-
-  // ずっと余分に溜まっているなら1つ捨てて、サーバーでの反映を早める
-  p.minQueue = Math.min(p.minQueue, q.length);
-  if (++p.queueTicks >= TRIM_WINDOW) {
-    if (p.minQueue > TRIM_ABOVE) skipOne(p);
-    p.minQueue = Infinity;
-    p.queueTicks = 0;
-  }
-
-  const inp = q.shift();
-  if (!inp) {
-    // まだ届いていない。直前の移動を続ける（止めるとカクつく）
-    return [{ move: { ...p.last[0] }, flick: null }, { move: { ...p.last[1] }, flick: null }];
-  }
-  p.ack = inp.n;
-  p.last[0].x = inp.a.move.x; p.last[0].y = inp.a.move.y;
-  p.last[1].x = inp.b.move.x; p.last[1].y = inp.b.move.y;
-  return [inp.a, inp.b];
-}
-
-/** 最も古い入力を使わずに捨てる。フリックは次の入力へ引き継ぐ。 */
-function skipOne(p) {
-  const q = p.queue;
-  const old = q.shift();
-  if (q[0]) {
-    if (old.a.flick && !q[0].a.flick) q[0].a.flick = old.a.flick;
-    if (old.b.flick && !q[0].b.flick) q[0].b.flick = old.b.flick;
-  }
-  p.ack = old.n;
-}
-
-function clamp1(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return n < -1 ? -1 : n > 1 ? 1 : n;
-}
-
-function tickRoom(room) {
-  const now = process.hrtime.bigint();
-  let dt = Number(now - room.last) / 1e9;
-  room.last = now;
-  if (dt > 0.25) dt = 0.25;
-
-  room.acc += dt;
-  let steps = 0;
-  while (room.acc >= TICK && steps < 5) {
-    room.acc -= TICK;
-    steps++;
-
-    const intents = [null, null, null, null];
-    for (const p of room.players) {
-      const [a, b] = takeIntents(p);
-      intents[p.team * 2] = a;
-      intents[p.team * 2 + 1] = b;
-    }
-    for (let i = 0; i < 4; i++) if (!intents[i]) intents[i] = NO_INTENT;
-    room.moves = intents.map((it) => [r2(it.move.x), r2(it.move.y)]);
-
-    const evs = step(room.state, intents, TICK);
-    for (const p of room.players) for (const e of evs) p.events.push(e);
-  }
-
-  if (steps > 0) broadcast(room);
-}
-
-function broadcast(room) {
-  const ack = [0, 0];
-  for (const p of room.players) ack[p.team] = p.ack;
-  // 共通部分は1回だけ文字列にし、イベントだけ相手ごとに足す
-  const base = JSON.stringify({
-    t: 's',
-    n: ++room.seq,
-    s: encodeState(room.state),
-    k: ack,
-    m: room.moves || [[0, 0], [0, 0], [0, 0], [0, 0]],
-  });
-  for (const p of room.players) {
-    if (!p.conn.open) continue;
-    if (p.conn.buffered > MAX_BUFFERED) continue;   // 詰まっている。イベントは次で送る
-    let text = base;
-    if (p.events.length) {
-      text = base.slice(0, -1) + ',"ev":' + JSON.stringify(p.events) + '}';
-      p.events = [];
-    }
-    try { p.conn.send(text); } catch (_) {}
+  if (a.rtc && b.rtc) {
+    for (const p of room.players) send(p.conn, { t: 'pair', team: p.team });
+    room.timer = setTimeout(() => begin(room, false), NEGOTIATE_MS);
+  } else {
+    begin(room, false);
   }
 }
 
-const r2 = (v) => Math.round(v * 100) / 100;
+function begin(room, p2p) {
+  if (room.mode !== 'nego') return;
+  clearTimeout(room.timer);
+  room.mode = p2p ? 'p2p' : 'server';
+  for (const p of room.players) send(p.conn, { t: 'start', team: p.team, p2p });
+  if (p2p) return;   // 試合はホストの端末が進める。ここは退出の知らせだけ受け持つ
+
+  room.match = createMatch(room.players.map((p) => p.conn));
+  room.last = process.hrtime.bigint();
+  room.timer = setInterval(() => {
+    const now = process.hrtime.bigint();
+    const dt = Number(now - room.last) / 1e9;
+    room.last = now;
+    room.match.advance(dt);
+  }, 1000 / 60);
+}
 
 function drop(client) {
   const i = waiting.indexOf(client);
@@ -248,6 +128,7 @@ function drop(client) {
   const room = client.room;
   if (!room) return;
   client.room = null;
+  clearTimeout(room.timer);
   clearInterval(room.timer);
   rooms.delete(room);
   for (const p of room.players) {
@@ -257,5 +138,7 @@ function drop(client) {
 }
 
 export function stats() {
-  return { waiting: waiting.length, rooms: rooms.size };
+  let p2p = 0;
+  for (const r of rooms) if (r.mode === 'p2p') p2p++;
+  return { waiting: waiting.length, rooms: rooms.size, p2p };
 }

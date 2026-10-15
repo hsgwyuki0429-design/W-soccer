@@ -181,3 +181,64 @@ test('往復160msでも自分の駒は入力した次のステップで動き、
     await new Promise((r) => server.close(r));
   }
 });
+
+test('同じWi-Fiの直結：両者が対応していれば接続情報を中継し、ホストの知らせで直結の試合を始める', async () => {
+  const server = createServer();
+  server.on('upgrade', (req, socket, head) => {
+    const conn = accept(req, socket, head);
+    if (conn) handleConnection(conn);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const Socket = globalThis.RealWebSocket ?? globalThis.WebSocket;
+
+  const open = (rtc) => new Promise((resolve) => {
+    const ws = new Socket(`ws://127.0.0.1:${port}/ws`);
+    ws.got = [];
+    ws.onmessage = (e) => ws.got.push(JSON.parse(e.data));
+    ws.onopen = () => { ws.send(JSON.stringify({ t: 'join', rtc })); resolve(ws); };
+  });
+  const until = async (ws, t) => {
+    for (let i = 0; i < 100; i++) {
+      const m = ws.got.find((x) => x.t === t);
+      if (m) return m;
+      await sleep(10);
+    }
+    assert.fail(`${t} が届かない`);
+  };
+
+  try {
+    // 両者とも対応：まず仲立ち（pair）。中継された接続情報が相手に届く
+    const a = await open(true);
+    await sleep(30);
+    const b = await open(true);
+    assert.equal((await until(a, 'pair')).team, 0);
+    assert.equal((await until(b, 'pair')).team, 1);
+    a.send(JSON.stringify({ t: 'rtc', d: { sdp: { type: 'offer', sdp: 'x' } } }));
+    assert.deepEqual((await until(b, 'rtc')).d, { sdp: { type: 'offer', sdp: 'x' } });
+    // ホスト以外の知らせは無視する
+    b.send(JSON.stringify({ t: 'mode', p2p: true }));
+    await sleep(50);
+    assert.equal(a.got.find((x) => x.t === 'start'), undefined);
+    a.send(JSON.stringify({ t: 'mode', p2p: true }));
+    assert.equal((await until(a, 'start')).p2p, true);
+    assert.equal((await until(b, 'start')).p2p, true);
+    // 直結中はサーバーは試合を進めない
+    await sleep(100);
+    assert.equal(b.got.filter((x) => x.t === 's').length, 0);
+    a.close(); b.close();
+
+    // 片方が対応していなければ、仲立ちせずにサーバーで始める
+    const c = await open(true);
+    await sleep(30);
+    const d = await open(false);
+    assert.equal((await until(c, 'start')).p2p, false);
+    assert.equal(c.got.find((x) => x.t === 'pair'), undefined);
+    await until(d, 's');
+    c.close(); d.close();
+  } finally {
+    await sleep(50);
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+  }
+});

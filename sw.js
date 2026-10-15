@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v7-opp-smooth';
+const VERSION = 'pairkick-v8-lan-direct';
 const SHELL = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ const SHELL = [
   './src/ui.js',
   './src/net.js',
   './src/snapshot.js',
+  './src/match.js',
 ];
 
 self.addEventListener('install', (e) => {

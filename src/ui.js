@@ -7,6 +7,7 @@ import { CONFIG } from './config.js';
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
 const STICK_KEY = 'pairkick.stickScale';
+const FLICK_KEY = 'pairkick.flickLevel';
 
 export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, onMenu = {}) {
   const el = (id) => document.getElementById(id);
@@ -151,6 +152,34 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
   });
   paintStick(false);
 
+  // フリックの感度（1〜9、5 が既定）
+  const ovFlick = el('ov-flick');
+  const flickInput = el('flick-level');
+  const flickVal = el('flick-level-val');
+  const FL = CONFIG.stick.flickLevels;
+  let flickLevel = FL.mid;
+  try {
+    const v = Number(localStorage.getItem(FLICK_KEY));
+    if (Number.isFinite(v) && v > 0) flickLevel = v;
+  } catch (_) {}
+  flickLevel = Math.min(FL.max, Math.max(FL.min, Math.round(flickLevel)));
+  flickInput.min = String(FL.min);
+  flickInput.max = String(FL.max);
+  flickInput.value = String(flickLevel);
+  let onFlickLevel = () => {};
+  const paintFlick = () => { flickVal.textContent = flickLevel === FL.mid ? `${flickLevel}（標準）` : String(flickLevel); };
+  paintFlick();
+  ovFlick.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovFlick.addEventListener('click', (e) => e.stopPropagation());
+  flickInput.addEventListener('input', () => {
+    flickLevel = Number(flickInput.value) || FL.mid;
+    paintFlick();
+    onFlickLevel(flickLevel);
+  });
+  flickInput.addEventListener('change', () => {
+    try { localStorage.setItem(FLICK_KEY, String(flickLevel)); } catch (_) {}
+  });
+
   let bannerTimer = 0;
   let shown = [-1, -1];
   let lockUntil = 0;              // 直前の指残りで即再戦してしまうのを防ぐ
@@ -180,6 +209,8 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
   return {
     get opponent() { return opponent; },
     get stickScale() { return stickPct / 100; },
+    get flickLevel() { return flickLevel; },
+    set onFlickLevel(fn) { onFlickLevel = fn; },
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },
     set onOpponent(fn) { onOpponent = fn; },

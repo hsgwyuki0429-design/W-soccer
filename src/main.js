@@ -46,6 +46,8 @@ const input = createInput(canvas, {
 });
 input.setStickScale(ui.stickScale);
 ui.onStickScale = (k) => input.setStickScale(k);
+input.setFlickLevel(ui.flickLevel);
+ui.onFlickLevel = (l) => input.setFlickLevel(l);
 
 let snapCamera = true;   // キックオフ・リセット時はカメラを補間せずに飛ばす
 let versus = false;      // 対人戦なら true（試合はサーバーが進める）

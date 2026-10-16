@@ -431,6 +431,13 @@ html, body {
   accent-color: #ffffff;
   touch-action: pan-x;
 }
+.slider-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: max(10px, calc(var(--u) * 10));
+  opacity: 0.5;
+}
 /* スティックの大きさは、動かしているあいだだけ実寸の見本をカードの上に重ねる */
 #stick-preview {
   position: absolute;
@@ -538,6 +545,7 @@ html, body {
   #ov-settings .seg .long { display: none; }
   #ov-settings .seg { white-space: nowrap; }
   .slider { margin-top: 0; }
+  .slider + .slider { margin-top: calc(var(--u) * 16); }
   .slider label { white-space: nowrap; }
   #cpu-help { line-height: 1.4; margin-top: calc(var(--u) * 4); }
   .seg { padding: calc(var(--u) * 6) 0; min-height: 34px; }

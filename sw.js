@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v18-stick-follow';
+const VERSION = 'pairkick-v19-flick-level';
 const SHELL = [
   './',
   './index.html',

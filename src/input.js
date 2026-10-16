@@ -37,6 +37,9 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   // スティックの大きさ（設定で変えられる。CSS px）
   let maxR = S.maxRadius;
   let knobR = S.knobRadius;
+  // 発火の感度（設定）。しきい値に掛ける倍率。1 が既定（感度5）
+  let restMs = S.restMs;
+  let minDist = S.minDist;
 
   /** クライアント座標 → canvas 基準の CSS px */
   function local(e) {
@@ -124,7 +127,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     const h = pt.history;
     if (h.length < 2) return false;
     const last = h[h.length - 1];
-    if (rest > S.restMs) return false;
+    if (rest > restMs) return false;
 
     let dx = 0, dy = 0;
     for (let i = h.length - 2; i >= 0; i--) {
@@ -134,7 +137,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       dy = last.y - a.y;
       if (Math.hypot(dx, dy) >= S.dirDist) break;
     }
-    return Math.hypot(dx, dy) >= S.minDist;   // 窓の中でまったく動いていない
+    return Math.hypot(dx, dy) >= minDist;   // 窓の中でまったく動いていない
   }
 
   /**
@@ -291,6 +294,18 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       // ノブは小さくしすぎると指に隠れて見えないので、外周ほどは縮めない
       knobR = Math.max(9, S.knobRadius * c);
     },
+    /**
+     * 発火の感度（1〜9。5 が既定）。大きいほど、小さな動きでも・止めかけでも出る。
+     * @param {number} level
+     */
+    setFlickLevel(level) {
+      const F = S.flickLevels;
+      const l = Math.min(F.max, Math.max(F.min, Math.round(Number(level)) || F.mid));
+      const k = Math.pow(F.step, l - F.mid);
+      minDist = S.minDist / k;
+      restMs = S.restMs * k;
+    },
+
     reset() {
       pointers[0] = pointers[1] = null;
       released[0] = released[1] = null;

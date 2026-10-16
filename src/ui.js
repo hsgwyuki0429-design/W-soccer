@@ -189,7 +189,10 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
   flickInput.max = String(FL.max);
   flickInput.value = String(flickLevel);
   let onFlickLevel = () => {};
-  const paintFlick = () => { flickVal.textContent = flickLevel === FL.mid ? `${flickLevel}（標準）` : String(flickLevel); };
+  const paintFlick = () => {
+    flickVal.textContent = flickLevel === FL.mid ? `${flickLevel}（標準）`
+      : flickLevel >= FL.max ? `${flickLevel}（離すだけ）` : String(flickLevel);
+  };
   paintFlick();
   ovFlick.addEventListener('pointerdown', (e) => e.stopPropagation());
   ovFlick.addEventListener('click', (e) => e.stopPropagation());

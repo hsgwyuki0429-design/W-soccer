@@ -40,6 +40,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   // 発火の感度（設定）。しきい値に掛ける倍率。1 が既定（感度5）
   let restMs = S.restMs;
   let minDist = S.minDist;
+  let onRelease = false;           // 感度が最大：離しただけで、矢印の向きへ出る
 
   /** クライアント座標 → canvas 基準の CSS px */
   function local(e) {
@@ -146,6 +147,9 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
    * 払い戻して中央へ帰ってきた場合に備え、直近の倒し向きを控えとして持つ。
    */
   function resolveRelease(pt) {
+    // 感度が最大のときは、指の動きを見ない。矢印が出ている（スティックが倒れている）なら、
+    // 離しただけでその向きへ出る。倒していなければ向きが無いので何も起きない
+    if (onRelease) return stickDir(pt);
     const last = pt.history[pt.history.length - 1];
     if (!wasSwiping(pt, last ? (last.rest || 0) : 0)) return null;
     return stickDir(pt) || pt.lastDir || { x: 0, y: 0 };
@@ -295,7 +299,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       knobR = Math.max(9, S.knobRadius * c);
     },
     /**
-     * 発火の感度（1〜9。5 が既定）。大きいほど、小さな動きでも・止めかけでも出る。
+     * 発火の感度（1〜9。5 が既定）。大きいほど、小さな動きでも・止めかけでも出る。最大（9）は離しただけで出る。
      * @param {number} level
      */
     setFlickLevel(level) {
@@ -304,6 +308,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
       const k = Math.pow(F.step, l - F.mid);
       minDist = S.minDist / k;
       restMs = S.restMs * k;
+      onRelease = l >= F.max;
     },
 
     reset() {

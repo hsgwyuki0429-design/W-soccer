@@ -2,7 +2,8 @@
 // game.js には触れない。出すのは intents 配列と、描画用のポインタ状態だけ。
 //
 // 操作はひとつ。置いた地点を支点にした相対操作（スティック）。
-// 進行方向は「置いた地点 → 今の指」。
+// 進行方向は「支点 → 今の指」。指が外周より外へ出ると、支点が指に引きずられて付いてくる
+// （ブロスタ式の追従）。切り返しは常に外周の直径ぶん動かせば済むので、小回りが効く。
 //
 // アクションは「離す直前に指が動いていれば」出る。速さは問わない。
 // 出ないのは、指を止めてから離したときだけ。
@@ -51,7 +52,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   function makePointer(id, p, now) {
     return {
       id,
-      baseX: p.x, baseY: p.y,     // 指を置いた地点（画面）。以後動かさない
+      baseX: p.x, baseY: p.y,     // 支点（画面）。最初は指を置いた地点。指が外周を越えると付いてくる
       curX: p.x, curY: p.y,       // 今の指の位置（画面）
       knobX: p.x, knobY: p.y,     // 表示用にクランプしたノブ（画面）
       alpha: 1,
@@ -64,6 +65,15 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
 
   function track(pt, x, y, now) {
     pt.curX = x; pt.curY = y;
+    // 追従：外周より外へ出た指に、支点を引きずって付いていかせる（向きは変えずに距離だけ詰める）
+    const fx = x - pt.baseX, fy = y - pt.baseY;
+    const fd = Math.hypot(fx, fy);
+    const reach = maxR * S.followAt;
+    if (fd > reach) {
+      const k = 1 - reach / fd;
+      pt.baseX += fx * k;
+      pt.baseY += fy * k;
+    }
     const sd = stickDir(pt);
     if (sd) pt.lastDir = sd;
 
@@ -93,6 +103,17 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     const d = Math.hypot(dx, dy);
     if (d < maxR * A.minInput) return null;
     return { x: dx / d, y: dy / d };
+  }
+
+  /**
+   * 倒し量 → 移動の強さ（0〜1）。遊びの内側は 0、fullAt で 1。間はまっすぐ伸ばす。
+   */
+  function shape(dx, dy) {
+    const d = Math.hypot(dx, dy);
+    const r = d / maxR;
+    if (r <= S.deadZone) return { x: 0, y: 0 };
+    const m = Math.min(1, (r - S.deadZone) / (S.fullAt - S.deadZone));
+    return { x: (dx / d) * m, y: (dy / d) * m };
   }
 
   /**
@@ -238,7 +259,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
           // 置いた地点を支点にした倒し量。向きは「置いた地点 → 今の指」
           const dx = pt.knobX - pt.baseX;
           const dy = pt.knobY - pt.baseY;
-          move = { x: dx / maxR, y: dy / maxR };
+          move = shape(dx, dy);
         }
 
         // 離した瞬間に確定したアクションを1回だけ渡す

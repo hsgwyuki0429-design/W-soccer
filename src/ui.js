@@ -9,6 +9,7 @@ const OPP_KEY = 'pairkick.opponent';
 const CTRL_KEY = 'pairkick.controlMode';
 const AIM_KEY = 'pairkick.tackleAim';
 const STICK_KEY = 'pairkick.stickScale';
+const RANGE_KEY = 'pairkick.aimRange';
 
 export function createUI(onPrimary, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
@@ -101,14 +102,42 @@ export function createUI(onPrimary, onCancel = () => {}) {
   });
   paintCtrl();
 
-  // タックルの向き：'stick'（操作どおり）/ 'ball'（ボールがすぐ近くなら、駒の中心→ボールの向き）
+  // タックルの向き：'stick'（操作どおり）/ 'ball'（近くのボール・相手へ補正。src/aim.js）
   const ovAim = el('ov-aim');
+  // 補正する距離（ボール何個ぶんの隙間までを補正するか）。1個ぶんがいちばん短い
+  const ovRange = el('ov-range');
+  const rangeInput = el('aim-range');
+  const rangeVal = el('aim-range-val');
+  const ballD = CONFIG.ball.radius * 2;
+  const maxBalls = CONFIG.aimBall.maxGap / ballD;
+  const minBalls = CONFIG.aimBall.gap / ballD;
+  let aimBalls = minBalls;
+  try {
+    const v = Number(localStorage.getItem(RANGE_KEY));
+    if (Number.isFinite(v) && v > 0) aimBalls = v;
+  } catch (_) {}
+  aimBalls = Math.round(Math.min(maxBalls, Math.max(minBalls, aimBalls)) * 2) / 2;
+  rangeInput.min = String(minBalls);
+  rangeInput.max = String(maxBalls);
+  rangeInput.value = String(aimBalls);
+  const paintRange = () => { rangeVal.textContent = `ボール${aimBalls}個`; };
+  paintRange();
+  ovRange.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovRange.addEventListener('click', (e) => e.stopPropagation());
+  rangeInput.addEventListener('input', () => {
+    aimBalls = Number(rangeInput.value) || minBalls;
+    paintRange();
+  });
+  rangeInput.addEventListener('change', () => {
+    try { localStorage.setItem(RANGE_KEY, String(aimBalls)); } catch (_) {}
+  });
   let tackleAim = 'stick';
   try { tackleAim = localStorage.getItem(AIM_KEY) === 'ball' ? 'ball' : 'stick'; } catch (_) {}
   function paintAim() {
     for (const b of ovAim.querySelectorAll('.seg')) {
       b.classList.toggle('on', b.dataset.aim === tackleAim);
     }
+    ovRange.classList.toggle('off', tackleAim !== 'ball');
   }
   ovAim.addEventListener('pointerdown', (e) => e.stopPropagation());
   ovAim.addEventListener('click', (e) => {
@@ -189,6 +218,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
     get controlMode() { return controlMode; },
     set onControlMode(fn) { onControlMode = fn; },
     get tackleAim() { return tackleAim; },
+    /** 補正する距離（表面どうしの隙間、世界座標） */
+    get aimGap() { return aimBalls * ballD; },
     get stickScale() { return stickPct / 100; },
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },

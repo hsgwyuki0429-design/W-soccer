@@ -69,11 +69,17 @@
             <button class="seg" data-ctrl="tap">タップでタックル</button>
           </div>
           <div id="ov-settings">
+          <div id="ov-aimbox">
           <div id="ov-aim" class="segs" role="group" aria-label="タックルの向き">
             <button class="seg" data-aim="stick"><span class="long">向き：</span>操作どおり</button>
-            <button class="seg" data-aim="ball"><span class="long">向き：</span>近いボールへ</button>
+            <button class="seg" data-aim="ball"><span class="long">向き：</span>近くへ補正</button>
           </div>
-          <div id="ov-stick">
+          <div id="ov-range" class="slider">
+            <label for="aim-range"><span><span class="long">補正する</span>距離</span> <span id="aim-range-val">ボール1個</span></label>
+            <input id="aim-range" type="range" min="1" max="6" step="0.5" value="1" />
+          </div>
+          </div>
+          <div id="ov-stick" class="slider">
             <label for="stick-size"><span><span class="long">スティックの</span>大きさ</span> <span id="stick-size-val">100%</span></label>
             <input id="stick-size" type="range" min="25" max="100" step="5" value="100" />
             <div id="stick-preview" aria-hidden="true"><b></b></div>

@@ -6,13 +6,9 @@ import { CONFIG } from './config.js';
 
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
-const CTRL_KEY = 'pairkick.controlMode';
-const AIM_KEY = 'pairkick.tackleAim';
 const STICK_KEY = 'pairkick.stickScale';
-const RANGE_KEY = 'pairkick.aimRange';
-const ANGLE_KEY = 'pairkick.aimAngle';
 
-export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) {
+export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, onMenu = {}) {
   const el = (id) => document.getElementById(id);
 
   const hud = el('hud');
@@ -76,6 +72,18 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) 
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
   specExit.addEventListener('click', (e) => { e.preventDefault(); onSpecExit(); });
 
+  // ボット戦の「メニュー」。開くと一時停止し、「試合に戻る」「ホームへ」を出す
+  const menuBtn = el('menu-btn');
+  const menu = el('menu');
+  const { open: onMenuOpen = () => {}, resume: onMenuResume = () => {}, home: onMenuHome = () => {} } = onMenu;
+  // キャンバスのスティック操作へ指が伝わらないようにする
+  for (const node of [menuBtn, menu]) node.addEventListener('pointerdown', (e) => e.stopPropagation());
+  menuBtn.addEventListener('click', (e) => { e.preventDefault(); onMenuOpen(); });
+  el('menu-resume').addEventListener('click', (e) => { e.preventDefault(); onMenuResume(); });
+  el('menu-home').addEventListener('click', (e) => { e.preventDefault(); onMenuHome(); });
+  // カードの外（暗いところ）を押しても試合に戻る
+  menu.addEventListener('click', (e) => { if (e.target === menu) onMenuResume(); });
+
   // 主ボタンの文字。画面ごとの文字（はじめる／もう一度／タイトルへ）を覚えておき、
   // 「観戦」を選んでいるあいだだけ「一覧を更新」にする
   let primaryLabel = 'はじめる';
@@ -104,108 +112,6 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) 
     paintOpp();
     onOpponent(opponent);
   });
-
-  // 操作方法：'stick'（離してタックル）/ 'tap'（画面タップでタックル）
-  const ovCtrl = el('ov-control');
-  const hintAct = el('hint-act');
-  let controlMode = 'stick';
-  try { controlMode = localStorage.getItem(CTRL_KEY) === 'tap' ? 'tap' : 'stick'; } catch (_) {}
-  let onControlMode = () => {};
-  function paintCtrl() {
-    for (const b of ovCtrl.querySelectorAll('.seg')) {
-      b.classList.toggle('on', b.dataset.ctrl === controlMode);
-    }
-    hintAct.innerHTML = controlMode === 'tap'
-      ? '<b>タップ</b><span>タックル（駒→指の向き）</span>'
-      : '<b>離す</b><span>キック / ダッシュ</span>';
-  }
-  ovCtrl.addEventListener('pointerdown', (e) => e.stopPropagation());
-  ovCtrl.addEventListener('click', (e) => {
-    const b = e.target.closest('.seg');
-    if (!b) return;
-    e.preventDefault();
-    e.stopPropagation();
-    controlMode = b.dataset.ctrl === 'tap' ? 'tap' : 'stick';
-    try { localStorage.setItem(CTRL_KEY, controlMode); } catch (_) {}
-    paintCtrl();
-    onControlMode(controlMode);
-  });
-  paintCtrl();
-
-  // タックルの向き：'stick'（操作どおり）/ 'ball'（近くのボール・相手へ補正。src/aim.js）
-  const ovAim = el('ov-aim');
-  // 補正する距離（ボール何個ぶんの隙間までを補正するか）。1個ぶんがいちばん短い
-  const ovRange = el('ov-range');
-  const rangeInput = el('aim-range');
-  const rangeVal = el('aim-range-val');
-  const ballD = CONFIG.ball.radius * 2;
-  const maxBalls = CONFIG.aimBall.maxGap / ballD;
-  const minBalls = CONFIG.aimBall.gap / ballD;
-  let aimBalls = minBalls;
-  try {
-    const v = Number(localStorage.getItem(RANGE_KEY));
-    if (Number.isFinite(v) && v > 0) aimBalls = v;
-  } catch (_) {}
-  aimBalls = Math.round(Math.min(maxBalls, Math.max(minBalls, aimBalls)) * 2) / 2;
-  rangeInput.min = String(minBalls);
-  rangeInput.max = String(maxBalls);
-  rangeInput.value = String(aimBalls);
-  const paintRange = () => { rangeVal.textContent = `ボール${aimBalls}個`; };
-  paintRange();
-  ovRange.addEventListener('pointerdown', (e) => e.stopPropagation());
-  ovRange.addEventListener('click', (e) => e.stopPropagation());
-  rangeInput.addEventListener('input', () => {
-    aimBalls = Number(rangeInput.value) || minBalls;
-    paintRange();
-  });
-  rangeInput.addEventListener('change', () => {
-    try { localStorage.setItem(RANGE_KEY, String(aimBalls)); } catch (_) {}
-  });
-
-  // 補正する角度（度）。指を払った向きからこれ以上外れた相手・ボールへは補正しない。180° は向きを問わない
-  const ovAngle = el('ov-angle');
-  const angleInput = el('aim-angle');
-  const angleVal = el('aim-angle-val');
-  const minAngle = CONFIG.aimBall.minAngle;
-  let aimAngle = 180;
-  try {
-    const v = Number(localStorage.getItem(ANGLE_KEY));
-    if (Number.isFinite(v) && v > 0) aimAngle = v;
-  } catch (_) {}
-  aimAngle = Math.round(Math.min(180, Math.max(minAngle, aimAngle)) / 15) * 15;
-  angleInput.min = String(minAngle);
-  angleInput.value = String(aimAngle);
-  const paintAngle = () => { angleVal.textContent = aimAngle >= 180 ? '全方向' : `±${aimAngle}°`; };
-  paintAngle();
-  ovAngle.addEventListener('pointerdown', (e) => e.stopPropagation());
-  ovAngle.addEventListener('click', (e) => e.stopPropagation());
-  angleInput.addEventListener('input', () => {
-    aimAngle = Number(angleInput.value) || 180;
-    paintAngle();
-  });
-  angleInput.addEventListener('change', () => {
-    try { localStorage.setItem(ANGLE_KEY, String(aimAngle)); } catch (_) {}
-  });
-  let tackleAim = 'stick';
-  try { tackleAim = localStorage.getItem(AIM_KEY) === 'ball' ? 'ball' : 'stick'; } catch (_) {}
-  function paintAim() {
-    for (const b of ovAim.querySelectorAll('.seg')) {
-      b.classList.toggle('on', b.dataset.aim === tackleAim);
-    }
-    ovRange.classList.toggle('off', tackleAim !== 'ball');
-    ovAngle.classList.toggle('off', tackleAim !== 'ball');
-  }
-  ovAim.addEventListener('pointerdown', (e) => e.stopPropagation());
-  ovAim.addEventListener('click', (e) => {
-    const b = e.target.closest('.seg');
-    if (!b) return;
-    e.preventDefault();
-    e.stopPropagation();
-    tackleAim = b.dataset.aim === 'ball' ? 'ball' : 'stick';
-    try { localStorage.setItem(AIM_KEY, tackleAim); } catch (_) {}
-    paintAim();
-  });
-  paintAim();
 
   // スティックの大きさ（%）。動かしているあいだは実寸の見本を出す
   const ovStick = el('ov-stick');
@@ -261,8 +167,10 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) 
     e.preventDefault();
     primary();
   });
-  // カード全体タップでも進める（「タップで即再戦」）
-  overlay.addEventListener('pointerdown', (e) => {
+  // カード全体タップでも進める（「タップで即再戦」）。
+  // pointerdown ではなく click で受ける。画面が低くてカードをスクロールするとき、
+  // 指を置いただけで始まってしまわないように（スクロールすると click は来ない）。
+  overlay.addEventListener('click', (e) => {
     if (e.target === ovBtn) return;
     primary();
   });
@@ -271,13 +179,6 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) 
 
   return {
     get opponent() { return opponent; },
-    get controlMode() { return controlMode; },
-    set onControlMode(fn) { onControlMode = fn; },
-    get tackleAim() { return tackleAim; },
-    /** 補正する距離（表面どうしの隙間、世界座標） */
-    get aimGap() { return aimBalls * ballD; },
-    /** 補正する角度（度）。180 は向きを問わない */
-    get aimAngle() { return aimAngle; },
     get stickScale() { return stickPct / 100; },
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },
@@ -332,6 +233,20 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) 
       cpuTag.hidden = names == null;
       cpuTag.textContent = names == null ? '' : `観戦中 · ${names[0]} vs ${names[1]}`;
     },
+
+    /** ボット戦の「メニュー」ボタンを出す / 消す */
+    setMenuButton(on) {
+      menuBtn.hidden = !on;
+      if (!on) menu.hidden = true;
+    },
+
+    /** 一時停止のメニューを開く / 閉じる */
+    setMenuOpen(on) {
+      menu.hidden = !on;
+      menuBtn.hidden = !!on;
+    },
+
+    get menuOpen() { return !menu.hidden; },
 
     setCpuMatch(level) {
       cpuTag.hidden = level == null;

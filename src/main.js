@@ -11,7 +11,6 @@ import { createAudio } from './audio.js';
 import { createUI } from './ui.js';
 import * as FX from './effects.js';
 import { createNet } from './net.js';
-import { aimTackle } from './aim.js';
 import { createProfile } from './profile.js';
 import { createSpectator, fetchRooms } from './spectate.js';
 
@@ -28,6 +27,7 @@ const ui = createUI(
   onPrimary,
   () => { leaveVersus(); ui.showTitle(); },   // 相手待ちをやめる
   () => stopSpectating(),                     // 観戦をやめる
+  { open: openMenu, resume: closeMenu, home: goHome },   // ボット戦のメニュー
 );
 
 const myTeam = () => (versus ? net.myTeam : TEAM_PLAYER);
@@ -42,10 +42,8 @@ let bot = createBot();
 const intents = [null, null, null, null];
 
 const input = createInput(canvas, {
-  onFeedback: (kind) => { if (kind === 'stick' || kind === 'tap') audio.click(); },
+  onFeedback: (kind) => { if (kind === 'stick') audio.click(); },
 });
-input.setMode(ui.controlMode);
-ui.onControlMode = (m) => input.setMode(m);
 input.setStickScale(ui.stickScale);
 ui.onStickScale = (k) => input.setStickScale(k);
 
@@ -54,6 +52,7 @@ let versus = false;      // 対人戦なら true（試合はサーバーが進�
 const netIntents = [null, null];
 
 let running = false;
+let paused = false;      // ボット戦でメニューを開いているあいだ
 let acc = 0;
 
 // 描画用の状態。物理は 1/60 秒刻みで進むが、画面は 120Hz など別の間隔で描かれ、
@@ -88,6 +87,7 @@ function onPrimary() {
 
   if (ui.opponent === 'human') {
     ui.setCpuMatch(null);
+    ui.setMenuButton(false);
     if (net.status === 'playing') {
       // 試合中に開いた結果画面から。決着していれば再戦を頼む
       if (state.phase === PHASE.OVER) net.restart();
@@ -114,7 +114,39 @@ function onPrimary() {
   input.reset();
   snapCamera = true;
   running = true;
+  paused = false;
+  ui.setMenuButton(true);
   showKickoffBanner();
+}
+
+// ---------------------------------------------------------------- bot menu
+
+function openMenu() {
+  if (versus || spectating || !running) return;
+  paused = true;
+  input.reset();
+  ui.setMenuOpen(true);
+}
+
+function closeMenu() {
+  if (!paused) return;
+  paused = false;
+  input.reset();
+  last = performance.now();
+  ui.setMenuOpen(false);
+}
+
+/** ボット戦をやめてタイトルへ戻る（成績には数えない） */
+function goHome() {
+  paused = false;
+  running = false;
+  ui.setMenuButton(false);
+  ui.hideBanner();
+  ui.setCpuMatch(null);
+  restart(state, 2);
+  FX.clearEffects(fx);
+  input.reset();
+  ui.showTitle();
 }
 
 function leaveVersus() {
@@ -154,6 +186,7 @@ net.on('status', (st, info) => {
   }
   if (st === 'playing') {
     versus = true;
+    ui.setMenuButton(false);
     acc = 0;
     profile.begin(net.opponent ? net.opponent.rating : undefined);
     lastPhase = PHASE.KICKOFF;
@@ -216,6 +249,7 @@ if (ui.opponent === 'watch') refreshWatch();
 
 function startSpectating(id) {
   audio.unlock();
+  ui.setMenuButton(false);
   if (versus) leaveVersus();
   running = false;
   spec.watch(id);
@@ -270,6 +304,8 @@ window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 document.addEventListener('visibilitychange', () => {
   last = performance.now();
+  // ボット戦でアプリを離れたら、戻ったときに慌てないよう一時停止しておく
+  if (document.hidden && running && !versus && !spectating) openMenu();
   // 対人戦でタブを離れると入力が途切れ、サーバーは直前の移動を続ける。
   // 走ったまま放置されないよう、離れる前に「止まる」を1つ送っておく。
   if (document.hidden && versus && running) {
@@ -374,6 +410,7 @@ function handleEvents(events) {
         }
         const win = e.winner === myTeam();
         ui.hideBanner();
+        ui.setMenuButton(false);
         if (versus) showVersusResult(win);
         else ui.showResult(win, state.score[myTeam()], state.score[1 - myTeam()]);
         audio.result(win);
@@ -416,7 +453,7 @@ function frame(now) {
     }
     net.apply(state, dt);
     if (running && steps > 0) capturePositions();
-  } else if (running) {
+  } else if (running && !paused) {
     if (fx.hitstop > 0) {
       // ヒットストップ中は物理を止める。演出だけ進む。
       acc = 0;
@@ -433,7 +470,7 @@ function frame(now) {
     }
   }
 
-  const stepped = versus ? running : (running && fx.hitstop <= 0);
+  const stepped = versus ? running : (running && !paused && fx.hitstop <= 0);
   updateView(stepped ? acc / STEP : 1);
 
   watchPhase();
@@ -499,20 +536,7 @@ function updateView(alpha) {
 
 function tick(dt) {
   const order = renderer.myUnitsInScreenOrder(state);
-  input.fill(netIntents, order, renderer.worldToScreen);
-  if (ui.tackleAim === 'ball') {
-    // 設定「近くへ補正」。向きは世界座標で決まるので、反転して見ている側は
-    // 画面の向きに直して入れる（下の反転処理で世界座標へ戻る）
-    const sign = versus && renderer.flip ? -1 : 1;
-    for (let i = 0; i < 2; i++) {
-      const it = netIntents[i];
-      if (!it || !it.flick) continue;
-      const world = { x: it.flick.x * sign, y: it.flick.y * sign };
-      const aimed = aimTackle(world, order[i], state, ui.aimGap, ui.aimAngle);
-      if (aimed !== world) it.flick = { x: aimed.x * sign, y: aimed.y * sign };
-    }
-  }
-
+  input.fill(netIntents);
   if (versus) {
     // 反転してプレイしている側は、画面の向きと世界の向きが逆になる
     if (renderer.flip) {

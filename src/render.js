@@ -53,6 +53,7 @@ export function createRenderer(canvas) {
   // 「自分の駒が手前・攻める方向が奥」を保つ。回さないと、上下も左右も逆の
   // 盤面を操作することになって、担当（左半画面＝左の駒）の意味が壊れる。
   let myTeam = 0;
+  let spectator = false;   // 観戦中（自分の駒は無い）
   let flip = false;
 
   /** 画面の左→右の順に並べた自分の2駒。反転時は世界の左右が入れ替わる。 */
@@ -109,9 +110,9 @@ export function createRenderer(canvas) {
     return view;
   }
 
-  /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ） */
+  /** 注視点：ボールと自分の2駒。相手は入れない（カメラを予測可能に保つ）。観戦中は全員 */
   function focus(s) {
-    const pts = [s.ball, s.units[myTeam * 2], s.units[myTeam * 2 + 1]];
+    const pts = spectator ? [s.ball, ...s.units] : [s.ball, s.units[myTeam * 2], s.units[myTeam * 2 + 1]];
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of pts) {
       if (p.x < minX) minX = p.x;
@@ -201,8 +202,9 @@ export function createRenderer(canvas) {
     drawGhosts(ctx, fx);
     drawTrail(ctx, fx);
     drawThreads(ctx, fx);
+    if (spectator) input = null;   // 観戦者は操作しないので、矢印・ピップ・スティックを描かない
     if (input) drawMoveArrows(ctx, input, myUnitsInScreenOrder(s), flip, teamColor);
-    drawUnits(ctx, s, fx, input, myTeam, myUnitsInScreenOrder(s), teamColor);
+    drawUnits(ctx, s, fx, input, spectator ? -1 : myTeam, myUnitsInScreenOrder(s), teamColor);
     drawBall(ctx, s, fx);
     drawParticles(ctx, fx);
 
@@ -231,10 +233,11 @@ export function createRenderer(canvas) {
       return { x: view.cssW / 2 + dx, y: view.cssH / 2 + dy };
     },
     get flip() { return flip; },
-    /** 対人戦で自分が team 1 になったときに呼ぶ */
-    setViewpoint(team) {
+    /** 対人戦で自分が team 1 になったときに呼ぶ。観戦は team 0 側から見る（watching = true） */
+    setViewpoint(team, watching = false) {
       myTeam = team | 0;
       flip = myTeam === 1;
+      spectator = !!watching;
     },
   };
 }

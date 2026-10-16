@@ -36,6 +36,9 @@ const HARD_QUEUE = 120;
 // フレームが偶数・奇数で入れ替わるので入力の届く間隔が揺れやすく、特によく起きていた。
 // 先借りはこのステップ数まで（通信が止まった相手の入力を延々と先取りしない）。
 const MAX_BORROW = 4;
+// 観戦者へは状態を間引いて送る（2回に1回＝約30Hz）。観戦側は少し遅らせて間を補って描くので足りる。
+// イベント（ゴール・決着など）は間引かず、次に送る状態に載せる。
+const WATCH_EVERY = 2;
 
 const NO_INTENT = { move: { x: 0, y: 0 }, flick: null };
 
@@ -61,6 +64,7 @@ export function createMatch(outs) {
   let seq = 0;
   let acc = 0;
   let moves = null;
+  const watchers = [];   // 観戦者への送り先 { out, events, n }
 
   function readIntents(team, msg) {
     const p = players[team];
@@ -159,6 +163,16 @@ export function createMatch(outs) {
       // 届かなくてもよい経路で送る（次の状態が丸ごと上書きするので）
       try { out.send(text, hasEvents); } catch (_) {}
     }
+    for (const w of watchers) {
+      if (++w.n % WATCH_EVERY !== 0 && !w.events.length) continue;
+      if (!w.out.open || w.out.buffered > MAX_BUFFERED) continue;
+      let text = base;
+      if (w.events.length) {
+        text = base.slice(0, -1) + ',"ev":' + JSON.stringify(w.events) + '}';
+        w.events = [];
+      }
+      try { w.out.send(text, false); } catch (_) {}
+    }
   }
 
   function stepOnce() {
@@ -173,6 +187,7 @@ export function createMatch(outs) {
 
     const evs = step(state, intents, TICK);
     for (const p of players) for (const e of evs) p.events.push(e);
+    for (const w of watchers) for (const e of evs) w.events.push(e);
   }
 
   return {
@@ -203,6 +218,15 @@ export function createMatch(outs) {
       stepOnce();
       broadcast();
     },
+    /** 観戦者への送り先を足す（{ send(text), open, buffered }）。 */
+    watch(out) {
+      if (!watchers.some((w) => w.out === out)) watchers.push({ out, events: [], n: 0 });
+    },
+    unwatch(out) {
+      const i = watchers.findIndex((w) => w.out === out);
+      if (i >= 0) watchers.splice(i, 1);
+    },
+    get watchers() { return watchers.length; },
   };
 }
 

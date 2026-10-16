@@ -12,6 +12,8 @@ import { createUI } from './ui.js';
 import * as FX from './effects.js';
 import { createNet } from './net.js';
 import { aimTackle } from './aim.js';
+import { createProfile } from './profile.js';
+import { createSpectator, fetchRooms } from './spectate.js';
 
 const S = CONFIG.world.scale;
 const V = S * CONFIG.world.pace;
@@ -25,12 +27,16 @@ const fx = FX.createEffects();
 const ui = createUI(
   onPrimary,
   () => { leaveVersus(); ui.showTitle(); },   // 相手待ちをやめる
+  () => stopSpectating(),                     // 観戦をやめる
 );
 
 const myTeam = () => (versus ? net.myTeam : TEAM_PLAYER);
 const colorOf = (team) => renderer.teamColor(team);
 
 const net = createNet();
+const spec = createSpectator();
+const profile = createProfile();
+let spectating = false;   // 観戦中なら true（操作はせず、届いた試合を描くだけ）
 const state = createState();
 let bot = createBot();
 const intents = [null, null, null, null];
@@ -64,7 +70,7 @@ let last = performance.now();
 // ---------------------------------------------------------------- haptics
 
 function buzz(pattern) {
-  if (fx.reduced) return;
+  if (fx.reduced || spectating) return;
   if (navigator.vibrate) {
     try { navigator.vibrate(pattern); } catch (_) {}
   }
@@ -74,6 +80,11 @@ function buzz(pattern) {
 
 function onPrimary() {
   audio.unlock();
+
+  if (ui.opponent === 'watch') {
+    refreshWatch();
+    return;
+  }
 
   if (ui.opponent === 'human') {
     ui.setCpuMatch(null);
@@ -86,7 +97,7 @@ function onPrimary() {
       return;
     }
     // 相手が見つかるまでは始めない
-    net.connect();
+    net.connect({ name: profile.displayName, rating: profile.rating });
     ui.showWaiting();
     return;
   }
@@ -107,6 +118,9 @@ function onPrimary() {
 }
 
 function leaveVersus() {
+  // 試合の途中でやめたら負けとして数える（決着後・始まる前なら何もしない）
+  if (versus && state.phase !== PHASE.OVER) profile.finish(false);
+  paintProfile();
   versus = false;
   ui.setNetInfo(null);
   net.disconnect();
@@ -129,15 +143,20 @@ net.on('status', (st, info) => {
     return;
   }
   if (st === 'gone') {
+    // 試合の途中で相手が抜けたら勝ちとして数える
+    const r = versus && state.phase !== PHASE.OVER ? profile.finish(true) : null;
+    paintProfile();
     versus = false;
     ui.setNetInfo(null);
     running = false;
-    ui.showNetError('相手が切断しました');
+    ui.showNetError(r ? `相手が切断しました。勝ちとして記録しました（${ratingNote(r)}）。` : '相手が切断しました');
     return;
   }
   if (st === 'playing') {
     versus = true;
     acc = 0;
+    profile.begin(net.opponent ? net.opponent.rating : undefined);
+    lastPhase = PHASE.KICKOFF;
     renderer.setViewpoint(net.myTeam);
     restart(state, 2);
     FX.clearEffects(fx);
@@ -154,9 +173,93 @@ net.on('events', (evs) => handleEvents(evs));
 // キックオフはタイマーではなく「蹴る側がボールに触れたら開始」なので、
 // バナーは自動で消さず、開始イベントで消す。
 function showKickoffBanner() {
+  if (spectating) {
+    const names = spec.info ? spec.info.names : ['', ''];
+    ui.banner('KICK OFF', `${names[state.kickoffTeam] || ''}のボール`, 0);
+    return;
+  }
   const mine = state.kickoffTeam === myTeam();
   ui.banner('KICK OFF', mine ? 'ボールに触れて開始' : '相手ボール', 0);
 }
+
+// ---------------------------------------------------------------- profile / spectate
+
+function paintProfile() {
+  ui.setProfile(profile.name, profile.rating, profile.wins, profile.losses);
+}
+paintProfile();
+ui.onName = (v) => { profile.setName(v); paintProfile(); };
+
+/** レートの増減を「レート 1516（+16）」の形にする */
+function ratingNote(r) {
+  return `レート ${r.rating}（${r.delta >= 0 ? '+' : ''}${r.delta}）`;
+}
+
+/** 対人戦の決着を数えて、結果画面を出す */
+function showVersusResult(win) {
+  const r = profile.finish(win);
+  paintProfile();
+  ui.showResult(win, state.score[myTeam()], state.score[1 - myTeam()], r ? ratingNote(r) : '');
+}
+
+let watchReq = 0;
+async function refreshWatch() {
+  const id = ++watchReq;
+  ui.showWatchList(undefined, startSpectating);
+  const rooms = await fetchRooms();
+  if (id === watchReq && ui.opponent === 'watch') ui.showWatchList(rooms, startSpectating);
+}
+ui.onOpponent = (o) => { if (o === 'watch') refreshWatch(); };
+// 前回、対人戦の途中でアプリを閉じていたら、負けとして数えたことを知らせる
+if (profile.abandoned) ui.banner('前回の対人戦は負けとして記録しました', ratingNote(profile.abandoned), 2600);
+if (ui.opponent === 'watch') refreshWatch();
+
+function startSpectating(id) {
+  audio.unlock();
+  if (versus) leaveVersus();
+  running = false;
+  spec.watch(id);
+}
+
+function stopSpectating() {
+  spec.stop();
+  endSpectating();
+  ui.showTitle();
+  refreshWatch();
+}
+
+function endSpectating() {
+  spectating = false;
+  renderer.setViewpoint(0);
+  ui.setSpectating(null);
+  ui.hideBanner();
+  restart(state, 2);
+  FX.clearEffects(fx);
+}
+
+spec.on('status', (st, info) => {
+  if (st === 'watching') {
+    spectating = true;
+    renderer.setViewpoint(0, true);
+    restart(state, 2);
+    FX.clearEffects(fx);
+    ui.hideOverlay();
+    ui.setSpectating(info.names);
+    snapCamera = true;
+    lastPhase = state.phase;
+    return;
+  }
+  if (st === 'ended' || st === 'error') {
+    const was = spectating;
+    endSpectating();
+    ui.showTitle();
+    refreshWatch().then(() => {
+      if (st === 'error') ui.banner('観戦できません', info && info.full ? '観戦の人数がいっぱいです' : 'その試合はもう終わっています', 1600);
+      else if (was) ui.banner('試合が終わりました', '', 1400);
+    });
+  }
+});
+spec.on('events', (evs) => handleEvents(evs));
 
 function resize() {
   const v = renderer.resize();
@@ -262,9 +365,17 @@ function handleEvents(events) {
       }
 
       case 'matchend': {
+        if (spectating) {
+          // 観戦中は結果画面を出さずに見続ける（そのまま再戦が始まることもある）
+          const names = spec.info ? spec.info.names : ['', ''];
+          ui.banner(`${names[e.winner] || ''} の勝ち`, `${state.score[0]} - ${state.score[1]}`, 2400);
+          audio.result(true);
+          break;
+        }
         const win = e.winner === myTeam();
         ui.hideBanner();
-        ui.showResult(win, state.score[myTeam()], state.score[1 - myTeam()]);
+        if (versus) showVersusResult(win);
+        else ui.showResult(win, state.score[myTeam()], state.score[1 - myTeam()]);
         audio.result(win);
         buzz(win ? [30, 50, 30, 50, 90] : [60]);
         running = false;
@@ -285,7 +396,10 @@ function frame(now) {
 
   input.update(dt);
 
-  if (versus) {
+  if (spectating) {
+    // 観戦：届いた状態を少し遅らせて、間を補って描く（操作はしない）
+    spec.apply(state, now);
+  } else if (versus) {
     // 試合の正解はサーバーが持つ。手元では同じ固定ステップで先に進めて（予測）、
     // 届いた状態で答え合わせをしたものを描く。
     let steps = 0;
@@ -440,9 +554,14 @@ function showNetInfo(now) {
   if (now - netInfoAt < 500) return;
   netInfoAt = now;
   const r = net.rtt;
+  const parts = [];
+  const opp = net.opponent;
+  parts.push(opp ? `vs ${opp.name}（${opp.rating}）` : '対人戦');
   // 同じWi-Fiで直結しているときは、そうと分かるように出す
-  const label = net.direct ? '対人戦 · Wi-Fi直結' : '対人戦 · 通信';
-  ui.setNetInfo(r < 0 ? `${label} 測定中` : `${label} ${Math.round(r)}ms`);
+  const label = net.direct ? 'Wi-Fi直結' : '通信';
+  parts.push(r < 0 ? `${label} 測定中` : `${label} ${Math.round(r)}ms`);
+  if (net.watchers > 0) parts.push(`観戦${net.watchers}`);
+  ui.setNetInfo(parts.join(' · '));
 }
 
 // フェーズの変わり目を1か所で見る。対人戦では tick のあとにサーバーの状態へ
@@ -459,8 +578,12 @@ function watchPhase() {
   if (versus && state.phase === PHASE.OVER && prev !== PHASE.OVER) {
     // 対人戦の決着はサーバーの matchend イベントで拾うが、
     // 取りこぼした場合の保険として結果画面を出す
-    if (!ui.overlayVisible) ui.showResult(state.winner === myTeam(), state.score[myTeam()], state.score[1 - myTeam()]);
+    if (!ui.overlayVisible) showVersusResult(state.winner === myTeam());
     running = false;
+  }
+  if (versus && prev === PHASE.OVER && state.phase !== PHASE.OVER) {
+    // 再戦が始まった。新しい試合として数え始める
+    profile.begin(net.opponent ? net.opponent.rating : undefined);
   }
 }
 

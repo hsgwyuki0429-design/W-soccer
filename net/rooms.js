@@ -10,16 +10,33 @@
 //   2. ホスト（チーム0）が結果を 'mode' で知らせてくる
 //   3. 直結できたなら、試合はホストの端末が進める。サーバーは進めない
 //      できなかったら（別のネットワークなど）、これまでどおりサーバーで進める
+//
+// 観戦：進行中の試合は /rooms で一覧でき、'watch' でその試合の状態を受け取れる。
+// サーバーで進めている試合はここから配る。直結の試合は、観戦者がいるあいだだけ
+// ホストが状態をサーバーへ送ってくるので、それをそのまま観戦者へ渡す。
+//
+// 名前とレートはクライアントが名乗ったものをそのまま相手へ伝える（保存はしない）。
 
 import { createMatch } from '../src/match.js';
+import { cleanName } from '../src/profile.js';
 
 // 直結を試す時間の上限。ホストが返事をしなければサーバーで始める
 const NEGOTIATE_MS = 6000;
+// 1つの試合を観戦できる人数の上限（サーバーの帯域を守る）
+const MAX_WATCHERS = 20;
+// 直結のホストから中継する状態の大きさの上限
+const MAX_RELAY = 8192;
 
 const waiting = [];        // 相手待ちのクライアント
 const rooms = new Set();
 
 let nextId = 1;
+let nextRoomId = 1;
+
+function cleanRating(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(4000, Math.max(0, n)) : 1500;
+}
 
 export function handleConnection(conn) {
   const client = {
@@ -28,6 +45,9 @@ export function handleConnection(conn) {
     room: null,
     team: -1,
     rtc: false,           // 直結を試せるクライアントか
+    name: 'ゲスト',
+    rating: 1500,
+    watching: null,       // 観戦している試合
   };
 
   conn.on('message', (text) => {
@@ -39,7 +59,22 @@ export function handleConnection(conn) {
     switch (msg.t) {
       case 'join':
         client.rtc = msg.rtc === true;
+        client.name = cleanName(msg.name);
+        client.rating = cleanRating(msg.rating);
         join(client);
+        break;
+      case 'watch': watch(client, Number(msg.id)); break;
+      case 's':
+        // 直結のホストが観戦者のために送ってくる状態。そのまま観戦者へ渡す
+        if (room && room.mode === 'p2p' && client.team === 0 && text.length < MAX_RELAY) {
+          for (const w of room.watchers) if (w.conn.open && w.conn.buffered < 32768) w.conn.send(text);
+        }
+        break;
+      case 'score':
+        // 直結の試合の得点（一覧に出すため）
+        if (room && room.mode === 'p2p' && client.team === 0 && Array.isArray(msg.s)) {
+          room.score = [msg.s[0] | 0, msg.s[1] | 0];
+        }
         break;
       case 'i':
       case 'restart':
@@ -70,7 +105,7 @@ function send(conn, obj) {
 }
 
 function join(client) {
-  if (client.room) return;
+  if (client.room || client.watching) return;
   const i = waiting.indexOf(client);
   if (i >= 0) return;                 // すでに待っている
 
@@ -85,7 +120,10 @@ function join(client) {
 
 function makeRoom(a, b) {
   const room = {
+    id: nextRoomId++,
     players: [a, b],
+    watchers: new Set(),
+    score: [0, 0],
     mode: 'nego',          // nego（直結を試し中） | server | p2p
     match: null,
     timer: null,
@@ -97,7 +135,7 @@ function makeRoom(a, b) {
   rooms.add(room);
 
   if (a.rtc && b.rtc) {
-    for (const p of room.players) send(p.conn, { t: 'pair', team: p.team });
+    for (const p of room.players) send(p.conn, { t: 'pair', team: p.team, opp: oppOf(room, p) });
     room.timer = setTimeout(() => begin(room, false), NEGOTIATE_MS);
   } else {
     begin(room, false);
@@ -108,10 +146,15 @@ function begin(room, p2p) {
   if (room.mode !== 'nego') return;
   clearTimeout(room.timer);
   room.mode = p2p ? 'p2p' : 'server';
-  for (const p of room.players) send(p.conn, { t: 'start', team: p.team, p2p });
-  if (p2p) return;   // 試合はホストの端末が進める。ここは退出の知らせだけ受け持つ
+  for (const p of room.players) send(p.conn, { t: 'start', team: p.team, p2p, opp: oppOf(room, p) });
+  if (p2p) {
+    // 試合はホストの端末が進める。ここは退出の知らせと観戦の中継だけ受け持つ
+    tellWatchers(room);
+    return;
+  }
 
   room.match = createMatch(room.players.map((p) => p.conn));
+  for (const w of room.watchers) room.match.watch(w.conn);
   room.last = process.hrtime.bigint();
   room.timer = setInterval(() => {
     const now = process.hrtime.bigint();
@@ -121,9 +164,50 @@ function begin(room, p2p) {
   }, 1000 / 60);
 }
 
+function oppOf(room, p) {
+  const o = room.players[1 - p.team];
+  return { name: o.name, rating: o.rating };
+}
+
+/** 観戦を始める。 */
+function watch(client, id) {
+  if (client.room || client.watching) return;
+  let room = null;
+  for (const r of rooms) if (r.id === id) room = r;
+  if (!room) { send(client.conn, { t: 'nowatch' }); return; }
+  if (room.watchers.size >= MAX_WATCHERS) { send(client.conn, { t: 'nowatch', full: true }); return; }
+  const i = waiting.indexOf(client);
+  if (i >= 0) waiting.splice(i, 1);
+  client.watching = room;
+  room.watchers.add(client);
+  send(client.conn, {
+    t: 'watching',
+    id: room.id,
+    names: room.players.map((p) => p.name),
+    ratings: room.players.map((p) => p.rating),
+  });
+  if (room.match) room.match.watch(client.conn);
+  tellWatchers(room);
+}
+
+/** 観戦者の人数を両プレイヤーへ知らせる（直結のホストは、これを見て状態を送るか決める）。 */
+function tellWatchers(room) {
+  for (const p of room.players) {
+    if (p.conn.open) send(p.conn, { t: 'watchers', n: room.watchers.size });
+  }
+}
+
 function drop(client) {
   const i = waiting.indexOf(client);
   if (i >= 0) waiting.splice(i, 1);
+
+  const watched = client.watching;
+  if (watched) {
+    client.watching = null;
+    watched.watchers.delete(client);
+    if (watched.match) watched.match.unwatch(client.conn);
+    if (rooms.has(watched)) tellWatchers(watched);
+  }
 
   const room = client.room;
   if (!room) return;
@@ -135,10 +219,35 @@ function drop(client) {
     p.room = null;
     if (p !== client && p.conn.open) send(p.conn, { t: 'gone' });
   }
+  for (const w of room.watchers) {
+    w.watching = null;
+    if (w.conn.open) send(w.conn, { t: 'ended' });
+  }
+  room.watchers.clear();
+}
+
+/** 観戦できる試合の一覧（/rooms）。 */
+export function listRooms() {
+  const out = [];
+  for (const r of rooms) {
+    if (r.mode === 'nego') continue;
+    out.push({
+      id: r.id,
+      names: r.players.map((p) => p.name),
+      ratings: r.players.map((p) => p.rating),
+      score: r.match ? [...r.match.state.score] : r.score,
+      direct: r.mode === 'p2p',
+      watchers: r.watchers.size,
+    });
+  }
+  return out;
 }
 
 export function stats() {
-  let p2p = 0;
-  for (const r of rooms) if (r.mode === 'p2p') p2p++;
-  return { waiting: waiting.length, rooms: rooms.size, p2p };
+  let p2p = 0, watchers = 0;
+  for (const r of rooms) {
+    if (r.mode === 'p2p') p2p++;
+    watchers += r.watchers.size;
+  }
+  return { waiting: waiting.length, rooms: rooms.size, p2p, watchers };
 }

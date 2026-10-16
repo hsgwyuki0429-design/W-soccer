@@ -255,7 +255,7 @@ html, body {
   opacity: 0.66;
 }
 
-#ov-opponents, #ov-control {
+#ov-opponents, #ov-control, #ov-aim {
   display: flex;
   gap: 0;
   margin: calc(var(--u) * 10) 0 0;
@@ -283,6 +283,49 @@ html, body {
   background: rgba(255, 255, 255, 0.92);
   color: #10231a;
   box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 8) rgba(0, 0, 0, 0.2);
+}
+
+/* スティックの大きさ。動かしているあいだだけ、実寸の見本をカードの上に重ねる */
+#ov-stick {
+  position: relative;
+  margin: calc(var(--u) * 12) 0 0;
+  text-align: left;
+}
+#ov-stick label {
+  display: flex;
+  justify-content: space-between;
+  font-size: max(12px, calc(var(--u) * 12));
+  opacity: 0.8;
+}
+#stick-size {
+  width: 100%;
+  margin: calc(var(--u) * 6) 0 0;
+  accent-color: #ffffff;
+}
+#stick-preview {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: calc(var(--r, 60px) * 2);
+  height: calc(var(--r, 60px) * 2);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+#stick-preview.show { opacity: 1; }
+#stick-preview b {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: calc(var(--k, 25px) * 2);
+  height: calc(var(--k, 25px) * 2);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  border: 1.2px solid rgba(255, 255, 255, 0.7);
 }
 
 #ov-hints {
@@ -344,7 +387,16 @@ html, body {
   }
   #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
   #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
-  #ov-opponents, #ov-control { margin-top: calc(var(--u) * 8); }
+  #ov-opponents, #ov-control, #ov-aim { margin-top: calc(var(--u) * 8); }
+  /* 横持ちは縦が足りないので、タックルの向きと大きさを横に並べる */
+  #ov-settings { display: flex; gap: calc(var(--u) * 10); align-items: flex-end; }
+  #ov-settings > * { flex: 1; min-width: 0; }
+  #ov-settings .long, #cpu-help { display: none; }
+  #ov-settings .seg { white-space: nowrap; }
+  #ov-stick label { font-size: calc(var(--u) * 11); white-space: nowrap; }
+  #ov-stick { margin-top: calc(var(--u) * 8); }
+  #stick-size { margin-top: calc(var(--u) * 2); }
+  #ov-hints { margin: calc(var(--u) * 8) 0 calc(var(--u) * 6); }
   .seg { padding: calc(var(--u) * 6) 0; }
   #ov-hints { margin: calc(var(--u) * 10) 0 calc(var(--u) * 10); }
   .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }

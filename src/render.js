@@ -626,7 +626,7 @@ export function drawSticks(ctx, view, input) {
     // ベース
     ctx.fillStyle = `rgba(255,255,255,${0.05 * a})`;
     ctx.beginPath();
-    ctx.arc(0, 0, CONFIG.stick.maxRadius, 0, Math.PI * 2);
+    ctx.arc(0, 0, input.stickRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.24 * a})`;
     ctx.lineWidth = 1;
@@ -635,7 +635,7 @@ export function drawSticks(ctx, view, input) {
     // ノブ
     ctx.fillStyle = `rgba(255,255,255,${0.16 * a})`;
     ctx.beginPath();
-    ctx.arc(st.knobX - st.baseX, st.knobY - st.baseY, CONFIG.stick.knobRadius, 0, Math.PI * 2);
+    ctx.arc(st.knobX - st.baseX, st.knobY - st.baseY, input.knobRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = `rgba(255,255,255,${0.5 * a})`;
     ctx.lineWidth = 1.2;

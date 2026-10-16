@@ -39,6 +39,9 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
   const keyAction = [null, null];
   let anyPointer = false;
   let mode = 'stick';              // 'stick' | 'tap'
+  // スティックの大きさ（設定で変えられる。CSS px）
+  let maxR = S.maxRadius;
+  let knobR = S.knobRadius;
   const taps = [null, null];       // タップで確定したタックルの目標（画面座標）
 
   /** クライアント座標 → canvas 基準の CSS px */
@@ -96,7 +99,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     const dx = pt.curX - pt.baseX;
     const dy = pt.curY - pt.baseY;
     const d = Math.hypot(dx, dy);
-    if (d < S.maxRadius * A.minInput) return null;
+    if (d < maxR * A.minInput) return null;
     return { x: dx / d, y: dy / d };
   }
 
@@ -240,7 +243,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
         const dx = pt.curX - pt.baseX;
         const dy = pt.curY - pt.baseY;
         const d = Math.hypot(dx, dy);
-        const k = d > S.maxRadius ? S.maxRadius / d : 1;
+        const k = d > maxR ? maxR / d : 1;
         pt.knobX = pt.baseX + dx * k;
         pt.knobY = pt.baseY + dy * k;
       }
@@ -261,7 +264,7 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
           // 置いた地点を支点にした倒し量。向きは「置いた地点 → 今の指」
           const dx = pt.knobX - pt.baseX;
           const dy = pt.knobY - pt.baseY;
-          move = { x: dx / S.maxRadius, y: dy / S.maxRadius };
+          move = { x: dx / maxR, y: dy / maxR };
         }
 
         // 離した瞬間に確定したアクションを1回だけ渡す
@@ -297,6 +300,17 @@ export function createInput(canvas, { onFeedback = () => {} } = {}) {
     get active() { return anyPointer; },
 
     get mode() { return mode; },
+
+    /** スティックの外周・ノブの半径（CSS px） */
+    get stickRadius() { return maxR; },
+    get knobRadius() { return knobR; },
+    /** @param {number} k 大きさの倍率（minScale〜1） */
+    setStickScale(k) {
+      const c = Math.min(1, Math.max(S.minScale, Number(k) || 1));
+      maxR = S.maxRadius * c;
+      // ノブは小さくしすぎると指に隠れて見えないので、外周ほどは縮めない
+      knobR = Math.max(9, S.knobRadius * c);
+    },
     /** @param {'stick'|'tap'} m */
     setMode(m) {
       mode = m === 'tap' ? 'tap' : 'stick';

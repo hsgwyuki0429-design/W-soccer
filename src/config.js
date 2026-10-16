@@ -106,6 +106,10 @@ export const CONFIG = {
     dirDist: 20,        // CSS px。向きを取るために遡る移動量の目安
     dirWindowMs: 200,   // ms。これより古くは遡らない
     minDist: 3,         // CSS px。窓の中でこれ未満しか動いていなければ「動いていない」
+    // 発火の感度（設定）。1〜9 の9段階で、中央の5が上の restMs・minDist そのまま。
+    // 1段上げるごとに、発火に要る動き（minDist）が 1/√2 倍、止まっていてよい時間（restMs）が √2 倍。
+    // 上げるほどわずかな動きでも・止めかけでも出る。下げるほど、はっきり払ったときだけ出る
+    flickLevels: { min: 1, max: 9, mid: 5, step: Math.SQRT2 },
     // 大きさの設定（maxRadius・knobRadius に掛ける倍率）。小さいほど少し動かすだけで最高速
     minScale: 0.25,
     // 追従（ブロスタ式）。指が外周（maxRadius × followAt）より外へ出たら、支点がそのぶん指へ寄ってくる。

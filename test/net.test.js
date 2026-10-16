@@ -291,8 +291,10 @@ test('観戦：名前を相手に伝え、一覧に出し、観戦者に状態�
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   const Socket = globalThis.RealWebSocket ?? globalThis.WebSocket;
+  const sockets = [];
   const open = () => new Promise((resolve) => {
     const ws = new Socket(`ws://127.0.0.1:${port}/ws`);
+    sockets.push(ws);
     ws.got = [];
     ws.onmessage = (e) => ws.got.push(JSON.parse(e.data));
     ws.onopen = () => resolve(ws);
@@ -368,16 +370,56 @@ test('観戦：名前を相手に伝え、一覧に出し、観戦者に状態�
     h.send(JSON.stringify(snap));
     const got = await until(w2, (m) => m.t === 's', '中継された状態');
     assert.equal(got.n, 7);
+    // ホストの状態はゲストにも届く（直結と二重。速いほうが使われる）
+    assert.equal((await until(g, (m) => m.t === 's', 'ゲストへ中継された状態')).n, 7);
+    // ゲストの入力はホストへ届く
+    g.send(JSON.stringify({ t: 'i', n: 3, a: [0, -1, null, null], b: [0, 0, null, null] }));
+    assert.equal((await until(h, (m) => m.t === 'i', 'ホストへ中継された入力')).n, 3);
+    // ホストの入力はゲストへは流さない
+    h.send(JSON.stringify({ t: 'i', n: 4, a: [0, 0], b: [0, 0] }));
     // ゲスト側が送ってきた状態は中継しない
     g.send(JSON.stringify({ ...snap, n: 8 }));
     await sleep(80);
     assert.ok(!w2.got.some((m) => m.t === 's' && m.n === 8));
+    assert.ok(!g.got.some((m) => m.t === 'i'), 'ホストの入力はゲストへ流さない');
     w2.close();
     await until(h, (m) => m.t === 'watchers' && m.n === 0, '観戦者が抜けたらホストへ0人');
     h.close(); g.close();
   } finally {
+    for (const ws of sockets) { try { ws.close(); } catch (_) {} }
     await sleep(50);
     server.closeAllConnections?.();
     await new Promise((r) => server.close(r));
   }
+});
+
+test('直結とサーバー経由の二重送信：同じ入力が2つの経路から順不同で届いても、二重に使わず踏み込みも1回だけ', async () => {
+  const { createMatch } = await import('../src/match.js');
+  const m = createMatch([{ open: false, buffered: 0, send() {} }, { open: false, buffered: 0, send() {} }]);
+  m.state.phase = PHASE.PLAY;
+  const ref = createState();
+  ref.phase = PHASE.PLAY;
+  const msg = (n, flick) => ({ t: 'i', n, a: [0, -1, flick ? 0 : null, flick ? -1 : null], b: [0, 0, null, null] });
+
+  // 経路A（直結）は速いがときどき詰まる、経路B（サーバー経由）は2ステップ遅れで確実に届く
+  const pathA = [], pathB = [];
+  let dashes = 0;
+  for (let t = 1; t <= 60; t++) {
+    const flick = t === 20;
+    pathA.push({ at: t + (t >= 30 && t < 40 ? 15 : 0), m: msg(t, flick) });   // 30〜39 は直結が詰まる
+    pathB.push({ at: t + 2, m: msg(t, flick) });
+    for (const q of [pathA, pathB]) {
+      while (q.length && q[0].at <= t) m.receive(0, q.shift().m);
+    }
+    const before = m.state.units[0].dashT;
+    m.step();
+    if (m.state.units[0].dashT > 0 && !(before > 0)) dashes++;
+    step(ref, [{ move: { x: 0, y: -1 }, flick: flick ? { x: 0, y: -1 } : null }, null, null, null], DT);
+  }
+  // 残りを届け切る
+  for (const q of [pathA, pathB]) while (q.length) m.receive(0, q.shift().m);
+  for (let t = 0; t < 4; t++) { m.step(); step(ref, [{ move: { x: 0, y: -1 }, flick: null }, null, null, null], DT); }
+  assert.equal(dashes, 1, '踏み込みは1回だけ');
+  const u = m.state.units[0], r = ref.units[0];
+  assert.ok(Math.abs(u.y - r.y) < 30 * S, `送った入力の数だけ進む (${(u.y - r.y).toFixed(1)})`);
 });

@@ -2,10 +2,13 @@
 // Apple 的な質感（半透明 + blur + ヘアライン + スプリング）はここに集中させる。
 
 import { normalizeCpuLevel, cpuTeamSize } from './cpu.js';
+import { CONFIG } from './config.js';
 
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
 const CTRL_KEY = 'pairkick.controlMode';
+const AIM_KEY = 'pairkick.tackleAim';
+const STICK_KEY = 'pairkick.stickScale';
 
 export function createUI(onPrimary, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
@@ -98,6 +101,65 @@ export function createUI(onPrimary, onCancel = () => {}) {
   });
   paintCtrl();
 
+  // タックルの向き：'stick'（操作どおり）/ 'ball'（ボールがすぐ近くなら、駒の中心→ボールの向き）
+  const ovAim = el('ov-aim');
+  let tackleAim = 'stick';
+  try { tackleAim = localStorage.getItem(AIM_KEY) === 'ball' ? 'ball' : 'stick'; } catch (_) {}
+  function paintAim() {
+    for (const b of ovAim.querySelectorAll('.seg')) {
+      b.classList.toggle('on', b.dataset.aim === tackleAim);
+    }
+  }
+  ovAim.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovAim.addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    tackleAim = b.dataset.aim === 'ball' ? 'ball' : 'stick';
+    try { localStorage.setItem(AIM_KEY, tackleAim); } catch (_) {}
+    paintAim();
+  });
+  paintAim();
+
+  // スティックの大きさ（%）。動かしているあいだは実寸の見本を出す
+  const ovStick = el('ov-stick');
+  const stickInput = el('stick-size');
+  const stickVal = el('stick-size-val');
+  const stickPreview = el('stick-preview');
+  let stickPct = 100;
+  try {
+    const v = Number(localStorage.getItem(STICK_KEY));
+    if (Number.isFinite(v) && v > 0) stickPct = v;
+  } catch (_) {}
+  stickPct = Math.round(Math.min(100, Math.max(CONFIG.stick.minScale * 100, stickPct)) / 5) * 5;
+  stickInput.min = String(CONFIG.stick.minScale * 100);
+  stickInput.value = String(stickPct);
+  let onStickScale = () => {};
+  let previewTimer = 0;
+  function paintStick(preview) {
+    stickVal.textContent = `${stickPct}%`;
+    const r = CONFIG.stick.maxRadius * stickPct / 100;
+    stickPreview.style.setProperty('--r', `${r}px`);
+    stickPreview.style.setProperty('--k', `${Math.max(9, CONFIG.stick.knobRadius * stickPct / 100)}px`);
+    if (preview) {
+      stickPreview.classList.add('show');
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(() => stickPreview.classList.remove('show'), 900);
+    }
+  }
+  ovStick.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovStick.addEventListener('click', (e) => e.stopPropagation());
+  stickInput.addEventListener('input', () => {
+    stickPct = Number(stickInput.value) || 100;
+    paintStick(true);
+    onStickScale(stickPct / 100);
+  });
+  stickInput.addEventListener('change', () => {
+    try { localStorage.setItem(STICK_KEY, String(stickPct)); } catch (_) {}
+  });
+  paintStick(false);
+
   let bannerTimer = 0;
   let shown = [-1, -1];
   let lockUntil = 0;              // 直前の指残りで即再戦してしまうのを防ぐ
@@ -126,6 +188,9 @@ export function createUI(onPrimary, onCancel = () => {}) {
     get opponent() { return opponent; },
     get controlMode() { return controlMode; },
     set onControlMode(fn) { onControlMode = fn; },
+    get tackleAim() { return tackleAim; },
+    get stickScale() { return stickPct / 100; },
+    set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },
 
     setCpuMatch(level) {

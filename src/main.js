@@ -11,6 +11,7 @@ import { createAudio } from './audio.js';
 import { createUI } from './ui.js';
 import * as FX from './effects.js';
 import { createNet } from './net.js';
+import { aimAtNearBall } from './aim.js';
 
 const S = CONFIG.world.scale;
 const V = S * CONFIG.world.pace;
@@ -39,6 +40,8 @@ const input = createInput(canvas, {
 });
 input.setMode(ui.controlMode);
 ui.onControlMode = (m) => input.setMode(m);
+input.setStickScale(ui.stickScale);
+ui.onStickScale = (k) => input.setStickScale(k);
 
 let snapCamera = true;   // キックオフ・リセット時はカメラを補間せずに飛ばす
 let versus = false;      // 対人戦なら true（試合はサーバーが進める）
@@ -383,6 +386,18 @@ function updateView(alpha) {
 function tick(dt) {
   const order = renderer.myUnitsInScreenOrder(state);
   input.fill(netIntents, order, renderer.worldToScreen);
+  if (ui.tackleAim === 'ball') {
+    // 設定「近いボールへ向ける」。向きは世界座標で決まるので、反転して見ている側は
+    // 画面の向きに直して入れる（下の反転処理で世界座標へ戻る）
+    const sign = versus && renderer.flip ? -1 : 1;
+    for (let i = 0; i < 2; i++) {
+      const it = netIntents[i];
+      if (!it || !it.flick) continue;
+      const world = { x: it.flick.x * sign, y: it.flick.y * sign };
+      const aimed = aimAtNearBall(world, order[i], state.ball);
+      if (aimed !== world) it.flick = { x: aimed.x * sign, y: aimed.y * sign };
+    }
+  }
 
   if (versus) {
     // 反転してプレイしている側は、画面の向きと世界の向きが逆になる

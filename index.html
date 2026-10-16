@@ -68,6 +68,17 @@
             <button class="seg" data-ctrl="stick">スティック</button>
             <button class="seg" data-ctrl="tap">タップでタックル</button>
           </div>
+          <div id="ov-settings">
+          <div id="ov-aim" class="segs" role="group" aria-label="タックルの向き">
+            <button class="seg" data-aim="stick"><span class="long">向き：</span>操作どおり</button>
+            <button class="seg" data-aim="ball"><span class="long">向き：</span>近いボールへ</button>
+          </div>
+          <div id="ov-stick">
+            <label for="stick-size"><span><span class="long">スティックの</span>大きさ</span> <span id="stick-size-val">100%</span></label>
+            <input id="stick-size" type="range" min="25" max="100" step="5" value="100" />
+            <div id="stick-preview" aria-hidden="true"><b></b></div>
+          </div>
+          </div>
           <div id="ov-hints">
             <div class="hint"><b>倒す</b><span>移動</span></div>
             <div class="hint" id="hint-act"><b>離す</b><span>キック / ダッシュ</span></div>

@@ -387,23 +387,34 @@ html, body {
 
 /* 画面が低いときはカードが縦にはみ出すので詰める */
 @media (max-height: 460px) {
+  /* 横持ちは縦が足りないので、カードを横に広げて2列にする。
+     左はこれまでどおりの中身、右に設定（タックルの向き・各スライダー）を縦に並べる。 */
   #overlay-card {
-    width: calc(var(--u) * 400);
+    width: min(94vw, calc(var(--u) * 760));
+    box-sizing: border-box;
     padding: calc(var(--u) * 18) calc(var(--u) * 24) calc(var(--u) * 16);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: calc(var(--u) * 28);
+    align-items: start;
+  }
+  #overlay-card > * { grid-column: 1; }
+  #ov-settings {
+    grid-column: 2;
+    grid-row: 1 / span 8;
+    align-self: center;
+    padding-left: calc(var(--u) * 24);
+    border-left: 0.5px solid var(--hairline);
   }
   #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
   #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
-  #ov-opponents, #ov-control, #ov-aim { margin-top: calc(var(--u) * 8); }
-  /* 横持ちは縦が足りないので、タックルの向きと大きさを横に並べる */
-  #ov-settings { display: flex; gap: calc(var(--u) * 10); align-items: flex-end; }
-  #ov-settings > * { flex: 1; min-width: 0; }
-  #ov-aimbox > #ov-aim { width: 100%; box-sizing: border-box; }
-  #ov-settings .long, #cpu-help { display: none; }
+  #ov-opponents, #ov-control { margin-top: calc(var(--u) * 8); }
+  #ov-aim { margin-top: 0; }
+  #ov-settings .seg .long { display: none; }
   #ov-settings .seg { white-space: nowrap; }
-  .slider label { font-size: calc(var(--u) * 11); white-space: nowrap; }
-  .slider { margin-top: calc(var(--u) * 6); }
-  .slider input[type="range"] { margin-top: calc(var(--u) * 2); }
-  #ov-hints { margin: calc(var(--u) * 8) 0 calc(var(--u) * 6); }
+  .slider { margin-top: calc(var(--u) * 14); }
+  .slider label { white-space: nowrap; }
+  #cpu-help { line-height: 1.4; margin-top: calc(var(--u) * 4); }
   .seg { padding: calc(var(--u) * 6) 0; }
   #ov-hints { margin: calc(var(--u) * 10) 0 calc(var(--u) * 10); }
   .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }

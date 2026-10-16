@@ -10,6 +10,7 @@ const CTRL_KEY = 'pairkick.controlMode';
 const AIM_KEY = 'pairkick.tackleAim';
 const STICK_KEY = 'pairkick.stickScale';
 const RANGE_KEY = 'pairkick.aimRange';
+const ANGLE_KEY = 'pairkick.aimAngle';
 
 export function createUI(onPrimary, onCancel = () => {}) {
   const el = (id) => document.getElementById(id);
@@ -131,6 +132,31 @@ export function createUI(onPrimary, onCancel = () => {}) {
   rangeInput.addEventListener('change', () => {
     try { localStorage.setItem(RANGE_KEY, String(aimBalls)); } catch (_) {}
   });
+
+  // 補正する角度（度）。指を払った向きからこれ以上外れた相手・ボールへは補正しない。180° は向きを問わない
+  const ovAngle = el('ov-angle');
+  const angleInput = el('aim-angle');
+  const angleVal = el('aim-angle-val');
+  const minAngle = CONFIG.aimBall.minAngle;
+  let aimAngle = 180;
+  try {
+    const v = Number(localStorage.getItem(ANGLE_KEY));
+    if (Number.isFinite(v) && v > 0) aimAngle = v;
+  } catch (_) {}
+  aimAngle = Math.round(Math.min(180, Math.max(minAngle, aimAngle)) / 15) * 15;
+  angleInput.min = String(minAngle);
+  angleInput.value = String(aimAngle);
+  const paintAngle = () => { angleVal.textContent = aimAngle >= 180 ? '全方向' : `±${aimAngle}°`; };
+  paintAngle();
+  ovAngle.addEventListener('pointerdown', (e) => e.stopPropagation());
+  ovAngle.addEventListener('click', (e) => e.stopPropagation());
+  angleInput.addEventListener('input', () => {
+    aimAngle = Number(angleInput.value) || 180;
+    paintAngle();
+  });
+  angleInput.addEventListener('change', () => {
+    try { localStorage.setItem(ANGLE_KEY, String(aimAngle)); } catch (_) {}
+  });
   let tackleAim = 'stick';
   try { tackleAim = localStorage.getItem(AIM_KEY) === 'ball' ? 'ball' : 'stick'; } catch (_) {}
   function paintAim() {
@@ -138,6 +164,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
       b.classList.toggle('on', b.dataset.aim === tackleAim);
     }
     ovRange.classList.toggle('off', tackleAim !== 'ball');
+    ovAngle.classList.toggle('off', tackleAim !== 'ball');
   }
   ovAim.addEventListener('pointerdown', (e) => e.stopPropagation());
   ovAim.addEventListener('click', (e) => {
@@ -220,6 +247,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
     get tackleAim() { return tackleAim; },
     /** 補正する距離（表面どうしの隙間、世界座標） */
     get aimGap() { return aimBalls * ballD; },
+    /** 補正する角度（度）。180 は向きを問わない */
+    get aimAngle() { return aimAngle; },
     get stickScale() { return stickPct / 100; },
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },

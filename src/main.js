@@ -394,7 +394,7 @@ function tick(dt) {
       const it = netIntents[i];
       if (!it || !it.flick) continue;
       const world = { x: it.flick.x * sign, y: it.flick.y * sign };
-      const aimed = aimTackle(world, order[i], state, ui.aimGap);
+      const aimed = aimTackle(world, order[i], state, ui.aimGap, ui.aimAngle);
       if (aimed !== world) it.flick = { x: aimed.x * sign, y: aimed.y * sign };
     }
   }

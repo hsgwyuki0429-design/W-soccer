@@ -94,3 +94,24 @@ test('近くへ補正：止まっているボールへ斜めに払っても、�
   assert.ok(sp > 100, `ボールが飛んでいる (${sp.toFixed(0)})`);
   assert.ok((s.ball.vx * want.x + s.ball.vy * want.y) / sp > 0.995);
 });
+
+test('近くへ補正：補正する角度を絞ると、指を払った向きからその角度より外れた相手・ボールへは向けない', () => {
+  const s = scene(), u = s.units[0];
+  const opp = s.units.find((o) => o.team !== u.team);
+  // ボールは真右、相手は真上
+  s.ball.x = u.x + RB + GAP * 0.5; s.ball.y = u.y;
+  opp.x = u.x; opp.y = u.y - RU - GAP * 0.5;
+  const at = (deg) => ({ x: Math.cos((deg * Math.PI) / 180), y: -Math.sin((deg * Math.PI) / 180) });   // 0°=右, 90°=上
+
+  // 右から30°上へ払う：ボールまで30°、相手まで60°
+  assert.ok(near(aimTackle(at(30), u, s, GAP, 180), { x: 1, y: 0 }), '180°（全方向）なら近いほう＝ボール');
+  assert.ok(near(aimTackle(at(30), u, s, GAP, 45), { x: 1, y: 0 }), '±45° ならボールだけが内側');
+  const f = at(30);
+  assert.equal(aimTackle(f, u, s, GAP, 15), f, '±15° ならどちらも外。操作どおり');
+  // 真左へ払う：ボールまで180°、相手まで90°
+  assert.ok(near(aimTackle(at(180), u, s, GAP, 90), { x: 0, y: -1 }), '±90° なら相手だけが内側');
+  const g = at(180);
+  assert.equal(aimTackle(g, u, s, GAP, 75), g, '±75° ならどちらも外');
+  // 払う向きが無い踏み込みは角度で絞らない
+  assert.ok(near(aimTackle({ x: 0, y: 0 }, u, s, GAP, 15), { x: 1, y: 0 }));
+});

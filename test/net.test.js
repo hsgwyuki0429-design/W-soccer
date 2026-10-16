@@ -423,3 +423,77 @@ test('直結とサーバー経由の二重送信：同じ入力が2つの経路�
   const u = m.state.units[0], r = ref.units[0];
   assert.ok(Math.abs(u.y - r.y) < 30 * S, `送った入力の数だけ進む (${(u.y - r.y).toFixed(1)})`);
 });
+
+test('直結の範囲：「どこでも」は STUN を使い、「同じWi-Fiだけ」は STUN を使わず相手の公開アドレスも捨てる', async () => {
+  let sock = null;
+  class FakeSocket {
+    constructor() { sock = this; this.readyState = 1; this.sent = []; }
+    send(t) { this.sent.push(JSON.parse(t)); }
+    close() {}
+  }
+  let pcs = [];
+  class FakePC {
+    constructor(cfg) { this.cfg = cfg; this.added = []; this.remote = null; pcs.push(this); }
+    createDataChannel() { return { readyState: 'connecting' }; }
+    async createOffer() { return { type: 'offer', sdp: 'o' }; }
+    async createAnswer() { return { type: 'answer', sdp: 'a' }; }
+    async setLocalDescription(d) {
+      this.localDescription = { type: d.type, sdp: ['v=0', 'a=candidate:1 1 udp 2 192.168.0.9 1000 typ host', 'a=candidate:2 1 udp 2 203.0.113.9 2000 typ srflx'].join('\r\n') };
+    }
+    async setRemoteDescription(d) { this.remote = d; }
+    async addIceCandidate(c) { this.added.push(c.candidate); }
+    close() {}
+  }
+  const saved = { ws: globalThis.WebSocket, pc: globalThis.RTCPeerConnection };
+  globalThis.WebSocket = FakeSocket;
+  globalThis.RTCPeerConnection = FakePC;
+  globalThis.location ??= { protocol: 'http:', host: 'localhost' };
+  const { createNet } = await import('../src/net.js');
+  const STUN = [{ urls: ['stun:example.test:3478'] }];
+  const remoteSdp = ['v=0', 'a=candidate:9 1 udp 2 198.51.100.7 5000 typ srflx', 'a=candidate:8 1 udp 2 10.0.0.7 5001 typ host'].join('\r\n');
+  const hostC = { candidate: 'candidate:8 1 udp 2 10.0.0.7 5001 typ host' };
+  const pubC = { candidate: 'candidate:9 1 udp 2 198.51.100.7 5000 typ srflx' };
+  const sleepTick = () => new Promise((r) => setTimeout(r, 5));
+
+  try {
+    // どこでも：STUN を渡し、相手の候補も全部使う。ホスト（team 0）の接続情報はそのまま送る
+    let net = createNet({ iceServers: STUN });
+    net.connect({ name: 'a', rating: 1500, scope: 'any' });
+    sock.onopen();
+    sock.onmessage({ data: JSON.stringify({ t: 'pair', team: 0 }) });
+    await sleepTick();
+    assert.deepEqual(pcs[0].cfg.iceServers, STUN);
+    const offer = sock.sent.find((m) => m.t === 'rtc' && m.d.sdp);
+    assert.ok(offer.d.sdp.sdp.includes('203.0.113.9'), 'どこでも：公開アドレスの候補も送る');
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { sdp: { type: 'answer', sdp: remoteSdp } } }) });
+    await sleepTick();
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { c: pubC } }) });
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { c: hostC } }) });
+    await sleepTick();
+    assert.ok(pcs[0].remote.sdp.includes('198.51.100.7'));
+    assert.deepEqual(pcs[0].added, [pubC.candidate, hostC.candidate]);
+    net.disconnect();
+
+    // 同じWi-Fiだけ：STUN なし。送る接続情報から公開アドレスを除き、相手の公開アドレスは捨てる
+    pcs = [];
+    net = createNet({ iceServers: STUN });
+    net.connect({ name: 'b', rating: 1500, scope: 'lan' });
+    sock.onopen();
+    sock.onmessage({ data: JSON.stringify({ t: 'pair', team: 0 }) });
+    await sleepTick();
+    assert.deepEqual(pcs[0].cfg.iceServers, [], 'STUN を使わない');
+    const offer2 = sock.sent.find((m) => m.t === 'rtc' && m.d.sdp);
+    assert.ok(offer2.d.sdp.sdp.includes('192.168.0.9') && !offer2.d.sdp.sdp.includes('203.0.113.9'), '送る接続情報に公開アドレスが無い');
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { sdp: { type: 'answer', sdp: remoteSdp } } }) });
+    await sleepTick();
+    assert.ok(!pcs[0].remote.sdp.includes('198.51.100.7') && pcs[0].remote.sdp.includes('10.0.0.7'), '相手の公開アドレスは使わない');
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { c: pubC } }) });
+    sock.onmessage({ data: JSON.stringify({ t: 'rtc', d: { c: hostC } }) });
+    await sleepTick();
+    assert.deepEqual(pcs[0].added, [hostC.candidate], '宅内の候補だけ使う');
+    net.disconnect();
+  } finally {
+    globalThis.WebSocket = saved.ws;
+    globalThis.RTCPeerConnection = saved.pc;
+  }
+});

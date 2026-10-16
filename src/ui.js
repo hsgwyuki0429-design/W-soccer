@@ -6,6 +6,7 @@ import { CONFIG } from './config.js';
 
 const CPU_KEY = 'pairkick.cpuLevel';
 const OPP_KEY = 'pairkick.opponent';
+const SCOPE_KEY = 'pairkick.directScope';
 const STICK_KEY = 'pairkick.stickScale';
 const FLICK_KEY = 'pairkick.flickLevel';
 
@@ -63,6 +64,27 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
   const watchMsg = el('watch-msg');
   const watchList = el('watch-list');
   const specExit = el('spec-exit');
+  // 直接つなぐ範囲：'any'（違うネットワークの相手とも）/ 'lan'（同じWi-Fiだけ）
+  const ovScope = el('ov-scope');
+  const scopeNote = el('scope-note');
+  let directScope = 'any';
+  try { directScope = localStorage.getItem(SCOPE_KEY) === 'lan' ? 'lan' : 'any'; } catch (_) {}
+  function paintScope() {
+    for (const b of ovScope.querySelectorAll('.seg')) b.classList.toggle('on', b.dataset.scope === directScope);
+    scopeNote.textContent = directScope === 'any'
+      ? '遠くの相手とも直接つないで速くします。相手にあなたのIPアドレスが見えます。'
+      : '同じWi-Fiの相手とだけ直接つなぎます。IPアドレスは見えません（それ以外はサーバー経由）。';
+  }
+  ovScope.addEventListener('click', (e) => {
+    const b = e.target.closest('.seg');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    directScope = b.dataset.scope === 'lan' ? 'lan' : 'any';
+    try { localStorage.setItem(SCOPE_KEY, directScope); } catch (_) {}
+    paintScope();
+  });
+  paintScope();
   let onName = () => {};
   let onOpponent = () => {};
   for (const node of [ovProfile, ovWatch]) {
@@ -214,6 +236,8 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },
     set onOpponent(fn) { onOpponent = fn; },
+    /** 直接つなぐ範囲 'any' | 'lan' */
+    get directScope() { return directScope; },
     set onName(fn) { onName = fn; },
 
     /** 名前の欄と成績の行を描く */
@@ -351,11 +375,11 @@ export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}, 
       lockUntil = performance.now() + 450;
     },
 
-    /** 相手は見つかった。同じWi-Fiなら直結しようとしているところ。 */
+    /** 相手は見つかった。直結しようとしているところ。 */
     showLinking() {
       this.showWaiting();
       ovTitle.textContent = '相手が見つかりました';
-      ovBody.innerHTML = '接続を準備しています…<br>同じWi-Fiなら直接つないで通信を速くします。';
+      ovBody.innerHTML = '接続を準備しています…<br>直接つないで通信を速くします。';
     },
 
     /** 対人戦の相手待ち */

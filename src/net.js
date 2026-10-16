@@ -10,7 +10,9 @@
 //
 // 相手の入力は届かないので、最後に分かっている移動入力を続けているものとして予測する。
 //
-// 同じWi-Fiにいる相手とは、端末どうしで直結（WebRTC）する。
+// 相手とは、端末どうしで直結（WebRTC）する。同じWi-Fiにいればもちろん、設定「どこでも」なら
+// 違うネットワークにいる相手とも（STUN で公開アドレスを教えてもらって）直接つなぐ。
+// つながらない相手（携帯回線の一部など）とは、これまでどおりサーバー経由で遊ぶ。
 // そのときは片方（ホスト＝チーム0）の端末が match.js で試合を進め、もう片方へ配る。
 // やりとりの中身はサーバー経由と同じなので、予測・答え合わせはそのまま使う。
 // 直結を試すのはマッチングのあと・試合の前だけで、つながらなければサーバー経由で始める。
@@ -27,6 +29,7 @@ import { CONFIG } from './config.js';
 import { createState, step } from './game.js';
 import { decodeState, copyState } from './snapshot.js';
 import { createMatch } from './match.js';
+import { STUN_SERVERS, isLocalCandidate, filterSdp } from './ice.js';
 
 const STEP = 1 / 60;
 const MAX_PENDING = 180;     // 未確認の入力をこれ以上は抱えない（3秒）
@@ -47,8 +50,10 @@ const PING_MS = 1000;        // 往復時間を測る間隔
 
 const SERVER_ONLY = new Set(['goal', 'kickoff', 'matchend']);
 
-// 直結を試す時間。同じWi-Fiならたいてい1秒もかからない
-const LINK_MS = 3500;
+// 直結を試す時間。同じWi-Fiならたいてい1秒もかからない。違うネットワークとは、
+// 公開アドレスを教えてもらって穴を開けるぶん、少し長く待つ（つながらなければサーバー経由で始める）
+const LINK_MS_LAN = 3500;
+const LINK_MS_ANY = 4000;
 // サーバーが「直結で始める」と言ってきたのに、こちらの直結がまだ開いていないとき待つ時間
 const OPEN_WAIT_MS = 2500;
 // 直結の相手からこれだけ何も届かなければ、切れたものとする
@@ -57,9 +62,6 @@ const PEER_SILENCE_MS = 5000;
 // サーバーが「相手が抜けた」と言ってきたあと、直結からも何も届かなければ抜けたと決める時間
 // （相手がネットだけ切れてWi-Fiはつながっているなら、直結から届き続けるので試合は続く）
 const GONE_CONFIRM_MS = 1000;
-// STUN/TURN は使わない。端末自身のアドレスどうしでしかつながらないので、
-// 実質「同じネットワークにいるときだけ」直結になる
-const RTC_CONFIG = { iceServers: [] };
 // 送信待ちがこれを超えている経路には送らない（詰まった経路に遅れを積まない。もう一方が届ける）。
 // 状態は毎回丸ごとなので小さく（古い状態を溜めない）、入力とイベントつきの状態は大きめに
 const WS_BUFFERED = 32 * 1024;
@@ -67,7 +69,12 @@ const STATE_BUFFERED = 4 * 1024;
 
 const canDirect = () => typeof RTCPeerConnection === 'function';
 
-export function createNet() {
+/**
+ * @param {{iceServers?: Array}} [options] STUN サーバー（テストで差し替える）
+ */
+export function createNet(options = {}) {
+  const stunServers = options.iceServers ?? STUN_SERVERS;
+  let scope = 'any';         // 直結の範囲： 'any'（どこでも） | 'lan'（同じWi-Fiだけ）
   let ws = null;
   let status = 'idle';       // idle | connecting | waiting | playing | gone | error
   let myTeam = 0;
@@ -264,15 +271,23 @@ export function createNet() {
     closeLink();
     myTeam = team;
     remoteCands = [];
+    // 同じWi-Fiだけのときは STUN を使わず、相手の公開アドレスも使わない（こちらのIPを見せないため）
+    const lan = scope === 'lan';
     try {
-      pc = new RTCPeerConnection(RTC_CONFIG);
+      pc = new RTCPeerConnection({ iceServers: lan ? [] : stunServers });
     } catch (_) {
       pc = null;
       if (team === 0) wsSend({ t: 'mode', p2p: false });
       return;
     }
     pc.onicecandidate = (e) => {
-      if (e.candidate) wsSend({ t: 'rtc', d: { c: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
+      if (!e.candidate) return;
+      if (lan && !isLocalCandidate(e.candidate.candidate)) return;
+      wsSend({ t: 'rtc', d: { c: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
+    };
+    // 接続の確認が全部だめだと分かったら、時間いっぱい待たずにサーバー経由で始める
+    pc.oniceconnectionstatechange = () => {
+      if (pc && pc.iceConnectionState === 'failed') giveUpLink();
     };
     if (team === 0) {
       // ホスト。状態は毎回丸ごと送るが、入力（踏み込み）は落とせないので確実に届く設定にする
@@ -282,15 +297,21 @@ export function createNet() {
       bindStates(pc.createDataChannel('s', { ordered: false, maxRetransmits: 0 }));
       pc.createOffer()
         .then((o) => pc && pc.setLocalDescription(o))
-        .then(() => pc && wsSend({ t: 'rtc', d: { sdp: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription } }))
+        .then(() => pc && wsSend({ t: 'rtc', d: { sdp: descOut(pc.localDescription) } }))
         .catch(() => giveUpLink());
-      linkTimer = setTimeout(giveUpLink, LINK_MS);
+      linkTimer = setTimeout(giveUpLink, lan ? LINK_MS_LAN : LINK_MS_ANY);
     } else {
       pc.ondatachannel = (e) => {
         if (e.channel.label === 's') bindStates(e.channel);
         else bindChannel(e.channel);
       };
     }
+  }
+
+  /** 送る接続情報。同じWi-Fiだけのときは、宅内のものでない候補を除く。 */
+  function descOut(desc) {
+    const d = desc.toJSON ? desc.toJSON() : { type: desc.type, sdp: desc.sdp };
+    return scope === 'lan' ? { type: d.type, sdp: filterSdp(d.sdp) } : d;
   }
 
   function giveUpLink() {
@@ -342,18 +363,22 @@ export function createNet() {
 
   function onSignal(d) {
     if (!pc || !d || typeof d !== 'object') return;
+    const lan = scope === 'lan';
     if (d.sdp) {
-      pc.setRemoteDescription(d.sdp)
+      // 同じWi-Fiだけのときは、相手の公開アドレスは使わない（使うとこちらのIPが相手に見える）
+      const remote = lan ? { type: d.sdp.type, sdp: filterSdp(d.sdp.sdp) } : d.sdp;
+      pc.setRemoteDescription(remote)
         .then(() => {
           for (const c of remoteCands) pc.addIceCandidate(c).catch(() => {});
           remoteCands = null;
           if (d.sdp.type !== 'offer') return;
           return pc.createAnswer()
             .then((a) => pc.setLocalDescription(a))
-            .then(() => wsSend({ t: 'rtc', d: { sdp: pc.localDescription.toJSON ? pc.localDescription.toJSON() : pc.localDescription } }));
+            .then(() => wsSend({ t: 'rtc', d: { sdp: descOut(pc.localDescription) } }));
         })
         .catch(() => {});
     } else if (d.c) {
+      if (lan && !isLocalCandidate(d.c.candidate)) return;
       if (remoteCands) remoteCands.push(d.c);
       else pc.addIceCandidate(d.c).catch(() => {});
     }
@@ -458,7 +483,7 @@ export function createNet() {
       if (mode === 'server') return 'server';
       return routeScore.server > routeScore.wifi ? 'server' : 'wifi';
     },
-    /** 同じWi-Fiで直結しているか */
+    /** 端末どうしで直結しているか */
     get direct() { return mode !== 'server'; },
     /** 相手の名前とレート（分からなければ null） */
     get opponent() { return opp; },
@@ -466,7 +491,7 @@ export function createNet() {
     get watchers() { return watchers; },
     on(kind, fn) { listeners[kind].push(fn); },
 
-    /** @param {{name?: string, rating?: number}} [who] 名乗る名前とレート */
+    /** @param {{name?: string, rating?: number, scope?: 'any'|'lan'}} [who] 名乗る名前とレート・直結の範囲 */
     connect(who) {
       if (ws && (status === 'connecting' || status === 'waiting' || status === 'playing')) return;
       // 前の対戦の残り（直結で遊んだあとはサーバーとの接続が開いたまま）を片付ける
@@ -477,6 +502,7 @@ export function createNet() {
         ws = null;
       }
       if (who) me = { name: who.name || 'ゲスト', rating: who.rating };
+      scope = who && who.scope === 'lan' ? 'lan' : 'any';
       opp = null;
       watchers = 0;
       rttWs = -1;

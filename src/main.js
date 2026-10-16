@@ -99,7 +99,7 @@ function onPrimary() {
       return;
     }
     // 相手が見つかるまでは始めない
-    net.connect({ name: profile.displayName, rating: profile.rating });
+    net.connect({ name: profile.displayName, rating: profile.rating, scope: ui.directScope });
     ui.showWaiting();
     return;
   }
@@ -585,7 +585,7 @@ function showNetInfo(now) {
   parts.push(opp ? `vs ${opp.name}（${opp.rating}）` : '対人戦');
   // 直結の試合は直結とサーバー経由の両方を使い、いま速いほうを出す
   // （サーバー経由のときの数字は、サーバーまでの往復）
-  const label = !net.direct ? '通信' : net.route === 'wifi' ? 'Wi-Fi直結' : '通信経由';
+  const label = !net.direct ? '通信' : net.route === 'wifi' ? '直結' : '通信経由';
   parts.push(r < 0 ? `${label} 測定中` : `${label} ${Math.round(r)}ms`);
   if (net.watchers > 0) parts.push(`観戦${net.watchers}`);
   ui.setNetInfo(parts.join(' · '));

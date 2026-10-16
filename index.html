@@ -79,6 +79,11 @@
             <label for="player-name">名前</label>
             <input id="player-name" type="text" maxlength="12" placeholder="ゲスト" autocomplete="nickname" enterkeyhint="done" />
             <p id="profile-stats">レート 1500 · 0勝 0敗</p>
+            <div id="ov-scope" class="segs" role="group" aria-label="直接つなぐ範囲">
+              <button class="seg" data-scope="any">どこでも直結</button>
+              <button class="seg" data-scope="lan">同じWi-Fiだけ</button>
+            </div>
+            <p id="scope-note"></p>
           </div>
           <div id="ov-watch" hidden>
             <p id="watch-msg">試合を探しています…</p>

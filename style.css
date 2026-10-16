@@ -306,6 +306,14 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+#ov-scope { margin-top: calc(var(--u) * 12); }
+#scope-note {
+  margin: calc(var(--u) * 6) 0 0;
+  font-size: max(11px, calc(var(--u) * 10));
+  line-height: 1.5;
+  opacity: 0.65;
+}
+
 /* 観戦できる試合の一覧 */
 #ov-watch { margin: calc(var(--u) * 14) 0 0; }
 #watch-msg { margin: 0; font-size: max(12px, calc(var(--u) * 12)); opacity: 0.7; }
@@ -379,7 +387,7 @@ html, body {
   opacity: 0.66;
 }
 
-#ov-opponents {
+#ov-opponents, #ov-scope {
   display: flex;
   gap: 0;
   margin: calc(var(--u) * 10) 0 0;

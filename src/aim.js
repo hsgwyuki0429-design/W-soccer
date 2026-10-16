@@ -2,7 +2,8 @@
 //
 // 踏み込んだ瞬間に、補正する距離の内側にボールや相手の駒があれば、踏み込む向きを
 // そちらへ合わせる。候補が複数あるときは、指を払った向きにいちばん近いものを選ぶ。
-// 距離の内側に何もなければ操作どおり。
+// 補正する角度を絞ると、指を払った向きからその角度より外れている候補は選ばない
+// （180° なら向きを問わない）。候補が無ければ操作どおり。
 //
 //   - 相手の駒：駒の中心 → 相手の中心の向き（潰れている相手は狙わない。上塗りできないので）
 //   - 止まっているボール：駒の中心 → ボールの中心の向き
@@ -21,11 +22,12 @@ const STEP = 1 / 60;
  * @param {object} unit 踏み込む駒（x, y, team）
  * @param {object} s 試合の状態（ball と units を読む）
  * @param {number} [gap] 補正する距離（表面どうしの隙間、世界座標）
+ * @param {number} [maxAngle] 補正する角度（度）。指を払った向きと候補の向きの差がこれ以内のものだけ選ぶ
  * @returns {{x:number,y:number}|null} 使う向き。補正しないときは flick をそのまま返す
  */
-export function aimTackle(flick, unit, s, gap = CONFIG.aimBall.gap) {
+export function aimTackle(flick, unit, s, gap = CONFIG.aimBall.gap, maxAngle = 180) {
   if (!flick || !unit || !s) return flick;
-  const cands = [];
+  let cands = [];
 
   const b = s.ball;
   if (b && surfaceGap(unit, b, CONFIG.unit.radius + CONFIG.ball.radius) <= gap) {
@@ -40,13 +42,16 @@ export function aimTackle(flick, unit, s, gap = CONFIG.aimBall.gap) {
       if (d) cands.push(d);
     }
   }
-  if (!cands.length) return flick;
-  if (cands.length === 1) return cands[0];
-
-  // 指を払った向きにいちばん近い候補。向きが立っていない踏み込みなら、
-  // 最初の候補（ボールがあればボール）にする
+  // 向きが立っていない踏み込み（払う向きが無い）は角度で絞らず、最初の候補（ボールがあればボール）にする
   const f = dir(flick.x, flick.y);
-  if (!f) return cands[0];
+  if (f && maxAngle < 180) {
+    const minDot = Math.cos((maxAngle * Math.PI) / 180) - 1e-9;
+    cands = cands.filter((c) => c.x * f.x + c.y * f.y >= minDot);
+  }
+  if (!cands.length) return flick;
+  if (cands.length === 1 || !f) return cands[0];
+
+  // 指を払った向きにいちばん近い候補
   let best = cands[0], bestDot = -Infinity;
   for (const c of cands) {
     const dot = c.x * f.x + c.y * f.y;

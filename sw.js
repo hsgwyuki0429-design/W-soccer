@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v13-aim-range-opp';
+const VERSION = 'pairkick-v14-aim-angle';
 const SHELL = [
   './',
   './index.html',

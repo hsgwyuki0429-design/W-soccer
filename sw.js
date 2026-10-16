@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v15-spectate-rating';
+const VERSION = 'pairkick-v16-multipath';
 const SHELL = [
   './',
   './index.html',

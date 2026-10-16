@@ -10,10 +10,14 @@
 //
 // 相手の入力は届かないので、最後に分かっている移動入力を続けているものとして予測する。
 //
-// 同じWi-Fiにいる相手とは、サーバーを経由せず端末どうしで直結（WebRTC）する。
+// 同じWi-Fiにいる相手とは、端末どうしで直結（WebRTC）する。
 // そのときは片方（ホスト＝チーム0）の端末が match.js で試合を進め、もう片方へ配る。
 // やりとりの中身はサーバー経由と同じなので、予測・答え合わせはそのまま使う。
 // 直結を試すのはマッチングのあと・試合の前だけで、つながらなければサーバー経由で始める。
+//
+// 直結の試合でも、入力と状態は直結とサーバー経由の両方で送る。受け取る側は通し番号で
+// 先に届いたほうだけを使うので、その時々で速いほうの経路が使われる（Wi-Fiが一瞬詰まっても
+// サーバー経由が埋める）。片方の経路が切れても、もう片方で試合を続ける。
 //
 // イベント（音・演出）は二重に鳴らないよう、出どころを種類で分ける：
 //   - 自分の操作で起きるもの・物理の反応 → 手元の予測から即座に出す
@@ -50,9 +54,16 @@ const OPEN_WAIT_MS = 2500;
 // 直結の相手からこれだけ何も届かなければ、切れたものとする
 // （Wi-Fiから外れても、直結が閉じたと分かるまでには時間がかかる）
 const PEER_SILENCE_MS = 5000;
+// サーバーが「相手が抜けた」と言ってきたあと、直結からも何も届かなければ抜けたと決める時間
+// （相手がネットだけ切れてWi-Fiはつながっているなら、直結から届き続けるので試合は続く）
+const GONE_CONFIRM_MS = 1000;
 // STUN/TURN は使わない。端末自身のアドレスどうしでしかつながらないので、
 // 実質「同じネットワークにいるときだけ」直結になる
 const RTC_CONFIG = { iceServers: [] };
+// 送信待ちがこれを超えている経路には送らない（詰まった経路に遅れを積まない。もう一方が届ける）。
+// 状態は毎回丸ごとなので小さく（古い状態を溜めない）、入力とイベントつきの状態は大きめに
+const WS_BUFFERED = 32 * 1024;
+const STATE_BUFFERED = 4 * 1024;
 
 const canDirect = () => typeof RTCPeerConnection === 'function';
 
@@ -69,8 +80,13 @@ export function createNet() {
   let moves = [[0, 0], [0, 0], [0, 0], [0, 0]];   // 各駒がいま受けている移動入力
   let serverEvents = [];
   const offsets = { units: sim.units.map(() => ({ x: 0, y: 0 })), ball: { x: 0, y: 0 } };
-  let rtt = -1;                       // 通信の往復時間（ms）。未計測は -1
+  let rttWs = -1;                     // サーバーとの往復時間（ms）。未計測は -1
+  let rttDc = -1;                     // 直結の相手との往復時間（ms）
   let pingTimer = null;
+  // 直結の試合で、どちらの経路が先に届けたか（直近ほど重い）。表示に使う
+  const routeScore = { wifi: 0, server: 0 };
+  let lastInN = 0;                    // ホスト：受け取った相手の入力の通し番号のうち最新
+  const evSeen = new Set();           // イベントを出し終えた状態の通し番号（二重に鳴らさない）
 
   // 試合の正解をどこからもらうか： server（サーバー経由） | host（自分が進める） | guest（直結の相手から）
   let mode = 'server';
@@ -82,10 +98,10 @@ export function createNet() {
   let linkTimer = null;
   let match = null;                   // ホストのときだけ。試合そのもの
   let peerAt = 0;                     // 直結の相手から最後に何か届いた時刻
+  let serverSaysGone = false;         // サーバーが「相手が抜けた」と言ってきた（直結の試合中）
   let me = { name: 'ゲスト', rating: 1500 };   // 名乗る名前とレート
   let opp = null;                     // 相手の名前とレート { name, rating }
   let watchers = 0;                   // この試合を観戦している人数
-  let watchOut = null;                // 直結のホストのとき、観戦者のためにサーバーへ状態を送る口
   let sentScore = '';                 // 直結のホストが最後にサーバーへ知らせた得点
 
   const mine = (unitIndex) => (unitIndex >> 1) === myTeam;
@@ -115,9 +131,13 @@ export function createNet() {
     latest = null;
     moves = [[0, 0], [0, 0], [0, 0], [0, 0]];
     serverEvents = [];
-    rtt = -1;
+    rttDc = -1;
     peerAt = performance.now();
     lastN = 0;
+    lastInN = 0;
+    serverSaysGone = false;
+    evSeen.clear();
+    routeScore.wifi = routeScore.server = 0;
     for (const o of offsets.units) o.x = o.y = 0;
     offsets.ball.x = offsets.ball.y = 0;
   }
@@ -164,8 +184,31 @@ export function createNet() {
   /** 試合の正解を持つ側へ送る。 */
   function toAuthority(obj) {
     if (mode === 'host') { match.receive(myTeam, obj); return; }
-    if (mode === 'guest') { dcSend(obj); return; }
+    if (mode === 'guest') {
+      // 直結とサーバー経由の両方で送る。ホストは先に届いたほうを使い、遅いほうは捨てる
+      const text = JSON.stringify(obj);
+      if (dc && dc.readyState === 'open') { try { dc.send(text); } catch (_) {} }
+      if (ws && ws.readyState === 1 && ws.bufferedAmount < WS_BUFFERED) { try { ws.send(text); } catch (_) {} }
+      return;
+    }
     wsSend(obj);
+  }
+
+  /** どちらの経路が先に届けたかを数える（直近ほど重く） */
+  function countRoute(via) {
+    routeScore.wifi *= 0.97;
+    routeScore.server *= 0.97;
+    routeScore[via] += 1;
+  }
+
+  /** ホスト：相手の入力などが届いた（直結・サーバー経由のどちらからでも） */
+  function fromGuest(m, via) {
+    peerAt = performance.now();
+    if (m.t === 'i') {
+      const n = Number(m.n);
+      if (Number.isInteger(n) && n > lastInN) { lastInN = n; countRoute(via); }
+    }
+    match.receive(1 - myTeam, m);
   }
 
   function wsSend(obj) {
@@ -180,27 +223,38 @@ export function createNet() {
     }
   }
 
-  /** 正解を持つ側から届いたもの（状態・往復時間）。 */
-  function fromAuthority(m) {
-    if (m.t === 's') {
-      if (!m.s || !Array.isArray(m.s.u)) return;
-      // イベントは状態が古くても拾う（直結では、イベントつきの状態だけ別の経路で来るので
-      // 後から来た新しい状態に追い越されることがある）
-      if (m.ev) for (const ev of m.ev) if (fromServer(ev)) serverEvents.push(ev);
-      const n = Number(m.n) || 0;
-      if (n && n <= lastN) return;   // 追い越された古い状態
-      lastN = n;
-      latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
-    } else if (m.t === 'P') {
-      const r = performance.now() - Number(m.c);
-      if (r >= 0 && r < 10000) rtt = rtt < 0 ? r : rtt * 0.7 + r * 0.3;
+  /**
+   * 正解を持つ側から届いた状態。via は届いた経路（'server' | 'wifi' | 'local'）。
+   * 直結の試合では同じ状態が2つの経路から届くので、通し番号で先に届いたほうだけ使う。
+   */
+  function fromAuthority(m, via = 'server') {
+    if (m.t !== 's' || !m.s || !Array.isArray(m.s.u)) return;
+    const n = Number(m.n) || 0;
+    // イベントは状態が古くても拾う（イベントつきの状態は確実に届く経路で来るので、
+    // 後から来た新しい状態に追い越されることがある）。ただし同じ状態のイベントは一度だけ
+    if (m.ev && !(n && evSeen.has(n))) {
+      if (n) {
+        evSeen.add(n);
+        if (evSeen.size > 256) evSeen.delete(evSeen.values().next().value);
+      }
+      for (const ev of m.ev) if (fromServer(ev)) serverEvents.push(ev);
     }
+    if (n && n <= lastN) return;   // 追い越された古い状態・もう一方の経路から先に届いた状態
+    lastN = n;
+    latest = m;   // 状態は丸ごと入っているので、最新の1つだけあればよい
+    if (mode === 'guest') { peerAt = performance.now(); countRoute(via); }
+  }
+
+  function rttFrom(m, prev) {
+    const r = performance.now() - Number(m.c);
+    if (!(r >= 0 && r < 10000)) return prev;
+    return prev < 0 ? r : prev * 0.7 + r * 0.3;
   }
 
   function ping() {
     const msg = { t: 'p', c: performance.now() };
-    if (mode === 'server') wsSend(msg);
-    else dcSend(msg);   // 直結中は相手との往復を測る
+    wsSend(msg);                        // サーバーとの往復
+    if (mode !== 'server') dcSend(msg); // 直結中は相手との往復も測る
   }
 
   // ---------------------------------------------------------- 直結（WebRTC）
@@ -255,7 +309,7 @@ export function createNet() {
         wsSend({ t: 'mode', p2p: true });
       }
     };
-    dc.onclose = peerGone;
+    dc.onclose = dcLost;
     dc.onmessage = (e) => {
       let m;
       try { m = JSON.parse(e.data); } catch (_) { return; }
@@ -263,13 +317,14 @@ export function createNet() {
       peerAt = performance.now();
       switch (m.t) {
         case 'p': dcSend({ t: 'P', c: Number(m.c) || 0 }); break;
+        case 'P': rttDc = rttFrom(m, rttDc); break;
         case 'bye': peerGone(); break;
         case 'i':
         case 'restart':
-          if (mode === 'host') match.receive(1 - myTeam, m);
+          if (mode === 'host') fromGuest(m, 'wifi');
           break;
         default:
-          if (mode === 'guest' || m.t === 'P') fromAuthority(m);
+          if (mode === 'guest') fromAuthority(m, 'wifi');
       }
     };
   }
@@ -281,8 +336,7 @@ export function createNet() {
       let m;
       try { m = JSON.parse(e.data); } catch (_) { return; }
       if (!m || typeof m !== 'object') return;
-      peerAt = performance.now();
-      fromAuthority(m);
+      fromAuthority(m, 'wifi');
     };
   }
 
@@ -312,20 +366,31 @@ export function createNet() {
     if (mode === 'host') {
       const outs = [null, null];
       // 自分の分はその場で受け取る（通信なし）
-      outs[myTeam] = { open: true, buffered: 0, send: (text) => fromAuthority(JSON.parse(text)) };
+      outs[myTeam] = { open: true, buffered: 0, send: (text) => fromAuthority(JSON.parse(text), 'local') };
+      // 相手へは直結とサーバー経由の両方で送る（サーバーは観戦者にも渡す）
+      const dcOpen = () => !!dc && dc.readyState === 'open';
+      const wsOpen = () => !!ws && ws.readyState === 1;
       outs[1 - myTeam] = {
-        get open() { return !!dc && dc.readyState === 'open'; },
-        get buffered() { return dc ? dc.bufferedAmount : 0; },
+        get open() { return dcOpen() || wsOpen(); },
+        // 両方の経路が詰まっているときだけ飛ばす（片方が空いていればそちらで届く）
+        get buffered() {
+          return Math.min(dcOpen() ? dc.bufferedAmount : Infinity, wsOpen() ? ws.bufferedAmount : Infinity);
+        },
         send: (text, mustArrive) => {
-          if (!mustArrive && sc && sc.readyState === 'open') sc.send(text);
-          else dc.send(text);
+          const limit = mustArrive ? WS_BUFFERED : STATE_BUFFERED;
+          if (dcOpen() && dc.bufferedAmount < limit) {
+            try {
+              if (!mustArrive && sc && sc.readyState === 'open') sc.send(text);
+              else dc.send(text);
+            } catch (_) {}
+          }
+          if (wsOpen() && ws.bufferedAmount < limit) { try { ws.send(text); } catch (_) {} }
         },
       };
       // 試合はタイマーではなく、自分のステップ（tick）に合わせて1つずつ進める。
       // 自分の入力は必ずそのステップに間に合うので、自分の駒の予測が外れない
       match = createMatch(outs);
       sentScore = '';
-      setWatchers(watchers);
     }
     setStatus('playing', { team: myTeam, direct: true });
   }
@@ -337,27 +402,22 @@ export function createNet() {
     setStatus('gone');
   }
 
-  /** 観戦者の人数が変わった。直結のホストは、観戦者がいるあいだだけ状態をサーバーへ送る */
-  function setWatchers(n) {
-    watchers = n | 0;
-    if (mode !== 'host' || !match) return;
-    if (watchers > 0 && !watchOut) {
-      watchOut = {
-        get open() { return !!ws && ws.readyState === 1; },
-        get buffered() { return ws ? ws.bufferedAmount : 0; },
-        send: (text) => ws.send(text),
-      };
-      match.watch(watchOut);
-    } else if (watchers === 0 && watchOut) {
-      match.unwatch(watchOut);
-      watchOut = null;
+  /** 直結が切れた。サーバー経由がまだ生きていれば、そちらだけで試合を続ける */
+  function dcLost() {
+    if (mode === 'server' || status !== 'playing') return;
+    // サーバーも「相手が抜けた」と言っていれば、待たずに終える
+    if (ws && ws.readyState === 1 && !serverSaysGone) {
+      if (dc) dc.onopen = dc.onclose = dc.onmessage = null;
+      if (sc) sc.onmessage = null;
+      dc = sc = null;
+      return;
     }
+    peerGone();
   }
 
   function closeLink() {
     clearTimeout(linkTimer);
     match = null;
-    watchOut = null;
     if (dc) {
       dc.onopen = dc.onclose = dc.onmessage = null;
       try { dc.close(); } catch (_) {}
@@ -385,8 +445,19 @@ export function createNet() {
     get status() { return status; },
     get myTeam() { return myTeam; },
     get pending() { return pending.length; },
-    /** 通信の往復時間（ms）。まだ測れていなければ -1 */
-    get rtt() { return rtt; },
+    /**
+     * 通信の往復時間（ms）。まだ測れていなければ -1。
+     * 直結の試合では、いま速いほうの経路のもの（サーバー経由はサーバーまでの往復）
+     */
+    get rtt() { return this.route === 'wifi' ? rttDc : rttWs; },
+    /** サーバーとの往復時間・直結の相手との往復時間（ms） */
+    get rttServer() { return rttWs; },
+    get rttWifi() { return rttDc; },
+    /** 直結の試合で、いま主に使われている経路 'wifi' | 'server'（直結でなければ 'server'） */
+    get route() {
+      if (mode === 'server') return 'server';
+      return routeScore.server > routeScore.wifi ? 'server' : 'wifi';
+    },
     /** 同じWi-Fiで直結しているか */
     get direct() { return mode !== 'server'; },
     /** 相手の名前とレート（分からなければ null） */
@@ -408,6 +479,7 @@ export function createNet() {
       if (who) me = { name: who.name || 'ゲスト', rating: who.rating };
       opp = null;
       watchers = 0;
+      rttWs = -1;
       reset();
       setStatus('connecting');
       try {
@@ -424,8 +496,11 @@ export function createNet() {
       };
       ws.onerror = () => { if (status !== 'playing') setStatus('error'); };
       ws.onclose = () => {
-        // 直結で遊んでいる最中は、サーバーとの接続が切れても試合は続けられる
-        if (mode !== 'server' && status === 'playing') return;
+        // 直結で遊んでいる最中は、サーバーとの接続が切れても直結で試合を続ける
+        if (mode !== 'server' && status === 'playing') {
+          if (!(dc && dc.readyState === 'open')) peerGone();
+          return;
+        }
         clearInterval(pingTimer);
         closeLink();
         if (status === 'playing' || status === 'waiting') setStatus('gone');
@@ -441,7 +516,7 @@ export function createNet() {
             setStatus('waiting', { linking: true });
             break;
           case 'rtc': onSignal(m.d); break;
-          case 'watchers': setWatchers(m.n); break;
+          case 'watchers': watchers = m.n | 0; break;
           case 'start':
             myTeam = m.team | 0;
             if (m.opp) opp = m.opp;
@@ -461,16 +536,25 @@ export function createNet() {
             setStatus('playing', { team: myTeam });
             break;
           case 'gone':
-            // 直結中の退出は直結のほうで分かる
-            if (mode !== 'server' && status === 'playing') break;
+            // 直結中の退出は直結のほうで分かる（直結がもう無ければここで終える）
+            if (mode !== 'server' && status === 'playing' && dc && dc.readyState === 'open') {
+              serverSaysGone = true;
+              break;
+            }
             closeLink();
             setStatus('gone');
             break;
           case 'P':
-            if (mode === 'server') fromAuthority(m);
+            rttWs = rttFrom(m, rttWs);
             break;
           case 's':
-            if (mode === 'server') fromAuthority(m);
+            // サーバーで進む試合の状態、または直結の試合でホストからサーバー経由で届いた状態
+            if (mode !== 'host') fromAuthority(m, 'server');
+            break;
+          case 'i':
+          case 'restart':
+            // 直結の試合で、相手の入力がサーバー経由で届いた
+            if (mode === 'host') fromGuest(m, 'server');
             break;
         }
       };
@@ -526,7 +610,9 @@ export function createNet() {
      * 答え合わせのずれは dt をかけて少しずつ消す。
      */
     apply(state, dt) {
-      if (mode !== 'server' && status === 'playing' && performance.now() - peerAt > PEER_SILENCE_MS) {
+      // 直結の相手から何も届かなくなった。サーバーも「抜けた」と言っていれば短く待つだけでよい
+      const silence = serverSaysGone ? GONE_CONFIRM_MS : PEER_SILENCE_MS;
+      if (mode !== 'server' && status === 'playing' && performance.now() - peerAt > silence) {
         peerGone();
         return false;
       }

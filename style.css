@@ -64,7 +64,7 @@ html, body {
    間に合わずカクつく原因になる。この2つだけはぼかさず、少し濃い地で同じ見た目に寄せる。 */
 #hud.glass,
 .banner-card.glass,
-#spec-exit.glass {
+.corner-btn.glass {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: rgba(20, 26, 23, 0.8);
@@ -176,8 +176,16 @@ html, body {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  /* 画面が低いとカードがはみ出して下のボタンが押せなくなるので、縦にスクロールできるようにする。
+     center だとはみ出した上側へスクロールできないので、カード側の margin:auto で中央に寄せる */
+  align-items: flex-start;
   justify-content: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px))
+    max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
   pointer-events: auto;
   background: rgba(6, 16, 12, 0.34);
   -webkit-backdrop-filter: blur(2px);
@@ -212,29 +220,67 @@ html, body {
 #cpu-summary { font-size: max(11px, calc(var(--u) * 11)); color: var(--team-b); margin: 8px 0 0; }
 #cpu-tag {
   position: absolute;
-  right: calc(var(--u) * 10);
-  top: calc(var(--u) * 8);
+  right: max(calc(var(--u) * 10), env(safe-area-inset-right, 0px));
+  top: calc(var(--u) * 8 + env(safe-area-inset-top, 0px));
   font-size: calc(var(--u) * 11);
   opacity: 0.8;
   pointer-events: none;
 }
 
-/* 観戦中だけ出す「観戦をやめる」。左上の帯に置く */
-#spec-exit {
+/* 左上の帯に置くボタン（観戦中の「観戦をやめる」、ボット戦の「メニュー」）。
+   --u はスマホだと 0.5px 前後まで小さくなるので、大きさは px の下限で指に合わせる。
+   横持ちの切り欠き・角丸の下に入らないよう、safe-area の内側に置く。 */
+.corner-btn {
   position: absolute;
-  left: calc(var(--u) * 10);
-  top: calc(var(--u) * 8 + env(safe-area-inset-top, 0px));
+  left: max(8px, calc(var(--u) * 10), env(safe-area-inset-left, 0px));
+  top: max(6px, calc(var(--u) * 8 + env(safe-area-inset-top, 0px)));
+  z-index: 3;
   pointer-events: auto;
+  touch-action: manipulation;
   appearance: none;
   color: #fff;
   font: inherit;
-  font-size: max(12px, calc(var(--u) * 12));
+  font-size: max(13px, calc(var(--u) * 12));
   font-weight: 600;
-  padding: calc(var(--u) * 7) calc(var(--u) * 12);
-  border-radius: calc(var(--u) * 14);
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 max(14px, calc(var(--u) * 12));
+  border-radius: 20px;
   cursor: pointer;
 }
-#spec-exit[hidden] { display: none; }
+.corner-btn:active { opacity: 0.75; }
+.corner-btn[hidden] { display: none; }
+
+/* ボット戦の一時停止メニュー */
+#menu {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: auto;
+  touch-action: manipulation;
+  background: rgba(6, 16, 12, 0.5);
+}
+#menu[hidden] { display: none; }
+#menu-card {
+  width: min(100%, 300px);
+  padding: 22px 20px 18px;
+  border-radius: 24px;
+  text-align: center;
+  animation: cardIn 0.3s var(--spring) both;
+}
+#menu-title { font-size: 17px; font-weight: 600; }
+#menu-card .pill { font-size: 15px; padding: 13px 20px; margin-top: 14px; min-height: 46px; }
+#menu-card .pill + .pill { margin-top: 10px; }
+.pill.pill-ghost {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  box-shadow: none;
+  border: 0.5px solid var(--hairline);
+}
 
 /* 名前と成績（対人戦のとき） */
 #ov-profile { margin: calc(var(--u) * 14) 0 0; }
@@ -285,15 +331,19 @@ html, body {
   color: inherit;
   font: inherit;
   font-size: max(12px, calc(var(--u) * 12));
+  min-height: 40px;
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
 }
 .watch-item .names { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .watch-item .score { font-weight: 700; font-variant-numeric: tabular-nums; }
 .watch-item .meta { opacity: 0.6; font-size: 0.9em; white-space: nowrap; }
 
 #overlay-card {
-  width: calc(var(--u) * 336);
+  margin: auto;
+  flex-shrink: 0;
+  width: min(100%, max(300px, calc(var(--u) * 336)));
   padding: calc(var(--u) * 30) calc(var(--u) * 26) calc(var(--u) * 24);
   border-radius: calc(var(--u) * 28);
   text-align: center;
@@ -329,7 +379,7 @@ html, body {
   opacity: 0.66;
 }
 
-#ov-opponents, #ov-control, #ov-aim {
+#ov-opponents {
   display: flex;
   gap: 0;
   margin: calc(var(--u) * 10) 0 0;
@@ -345,12 +395,14 @@ html, body {
   background: transparent;
   color: rgba(255, 255, 255, 0.55);
   font-family: inherit;
-  font-size: calc(var(--u) * 12);
+  font-size: max(12px, calc(var(--u) * 12));
   font-weight: 600;
   letter-spacing: calc(var(--u) * 0.2);
+  min-height: 36px;
   padding: calc(var(--u) * 8) 0;
-  border-radius: calc(var(--u) * 11);
+  border-radius: max(10px, calc(var(--u) * 11));
   cursor: pointer;
+  touch-action: manipulation;
   transition: background 0.28s var(--spring), color 0.28s var(--spring);
 }
 .seg.on {
@@ -359,7 +411,7 @@ html, body {
   box-shadow: 0 calc(var(--u) * 2) calc(var(--u) * 8) rgba(0, 0, 0, 0.2);
 }
 
-/* スライダー（補正する距離・スティックの大きさ） */
+/* スライダー（スティックの大きさ） */
 .slider {
   position: relative;
   margin: calc(var(--u) * 12) 0 0;
@@ -374,13 +426,11 @@ html, body {
 }
 .slider input[type="range"] {
   width: 100%;
+  min-height: 28px;
   margin: calc(var(--u) * 6) 0 0;
   accent-color: #ffffff;
+  touch-action: pan-x;
 }
-/* 「操作どおり」のときは補正する距離は効かないので、薄くして触れなくする */
-.slider.off { opacity: 0.35; }
-.slider.off input { pointer-events: none; }
-#ov-range { margin-top: calc(var(--u) * 8); }
 /* スティックの大きさは、動かしているあいだだけ実寸の見本をカードの上に重ねる */
 #stick-preview {
   position: absolute;
@@ -443,10 +493,12 @@ html, body {
   background: #fff;
   color: #10231a;
   font-family: inherit;
-  font-size: calc(var(--u) * 15);
+  font-size: max(15px, calc(var(--u) * 15));
   font-weight: 600;
   letter-spacing: calc(var(--u) * 0.1);
+  min-height: 44px;
   cursor: pointer;
+  touch-action: manipulation;
   box-shadow: 0 calc(var(--u) * 6) calc(var(--u) * 20) rgba(0, 0, 0, 0.24);
   transition: transform 0.28s var(--spring), opacity 0.28s var(--spring);
 }
@@ -462,9 +514,9 @@ html, body {
 /* 画面が低いときはカードが縦にはみ出すので詰める */
 @media (max-height: 460px) {
   /* 横持ちは縦が足りないので、カードを横に広げて2列にする。
-     左はこれまでどおりの中身、右に設定（タックルの向き・各スライダー）を縦に並べる。 */
+     左はこれまでどおりの中身、右に設定（スティックの大きさ）を置く。 */
   #overlay-card {
-    width: min(94vw, calc(var(--u) * 760));
+    width: min(100%, max(560px, calc(var(--u) * 760)));
     box-sizing: border-box;
     padding: calc(var(--u) * 18) calc(var(--u) * 24) calc(var(--u) * 16);
     display: grid;
@@ -482,14 +534,13 @@ html, body {
   }
   #ov-title { font-size: calc(var(--u) * 32); margin: calc(var(--u) * 4) 0 calc(var(--u) * 8); }
   #ov-body { font-size: calc(var(--u) * 12); line-height: 1.5; }
-  #ov-opponents, #ov-control { margin-top: calc(var(--u) * 8); }
-  #ov-aim { margin-top: 0; }
+  #ov-opponents { margin-top: calc(var(--u) * 8); }
   #ov-settings .seg .long { display: none; }
   #ov-settings .seg { white-space: nowrap; }
-  .slider { margin-top: calc(var(--u) * 14); }
+  .slider { margin-top: 0; }
   .slider label { white-space: nowrap; }
   #cpu-help { line-height: 1.4; margin-top: calc(var(--u) * 4); }
-  .seg { padding: calc(var(--u) * 6) 0; }
+  .seg { padding: calc(var(--u) * 6) 0; min-height: 34px; }
   #ov-hints { margin: calc(var(--u) * 10) 0 calc(var(--u) * 10); }
   .hint { padding: calc(var(--u) * 8) calc(var(--u) * 6); }
   .pill { margin-top: calc(var(--u) * 12); padding: calc(var(--u) * 11) calc(var(--u) * 20); }
@@ -501,4 +552,5 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   #banner.show, #banner.out, #overlay-card { animation-duration: 0.001s; }
   #hud .num, .pill, #overlay { transition-duration: 0.001s; }
+  #menu-card { animation-duration: 0.001s; }
 }

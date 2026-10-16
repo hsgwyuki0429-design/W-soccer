@@ -7,7 +7,7 @@
 
 import { createServer } from 'node:http';
 import { accept } from './net/ws.js';
-import { handleConnection, stats } from './net/rooms.js';
+import { handleConnection, stats, listRooms } from './net/rooms.js';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
@@ -43,6 +43,12 @@ const server = createServer(async (req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ...stats() }));
+    return;
+  }
+  // 観戦できる試合の一覧
+  if ((req.url || '').split('?')[0] === '/rooms') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ rooms: listRooms() }));
     return;
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') {

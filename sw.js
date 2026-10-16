@@ -1,7 +1,7 @@
 // sw.js — ホーム画面から起動したときにオフラインでも動くようにするだけのもの。
 // ビルドしないので、バージョンを上げればそのまま入れ替わる。
 
-const VERSION = 'pairkick-v14-aim-angle';
+const VERSION = 'pairkick-v15-spectate-rating';
 const SHELL = [
   './',
   './index.html',
@@ -26,6 +26,8 @@ const SHELL = [
   './src/snapshot.js',
   './src/match.js',
   './src/aim.js',
+  './src/profile.js',
+  './src/spectate.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -51,7 +53,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   // WebSocket や API は触らない
-  if (url.pathname.endsWith('/ws')) return;
+  if (url.pathname.endsWith('/ws') || url.pathname.endsWith('/rooms') || url.pathname.endsWith('/health')) return;
 
   // HTML と JS は「まずネット、駄目ならキャッシュ」。
   // 更新をすぐ拾いたい一方、オフラインでも起動させたいため。

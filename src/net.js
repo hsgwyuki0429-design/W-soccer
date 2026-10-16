@@ -82,6 +82,11 @@ export function createNet() {
   let linkTimer = null;
   let match = null;                   // ホストのときだけ。試合そのもの
   let peerAt = 0;                     // 直結の相手から最後に何か届いた時刻
+  let me = { name: 'ゲスト', rating: 1500 };   // 名乗る名前とレート
+  let opp = null;                     // 相手の名前とレート { name, rating }
+  let watchers = 0;                   // この試合を観戦している人数
+  let watchOut = null;                // 直結のホストのとき、観戦者のためにサーバーへ状態を送る口
+  let sentScore = '';                 // 直結のホストが最後にサーバーへ知らせた得点
 
   const mine = (unitIndex) => (unitIndex >> 1) === myTeam;
 
@@ -319,6 +324,8 @@ export function createNet() {
       // 試合はタイマーではなく、自分のステップ（tick）に合わせて1つずつ進める。
       // 自分の入力は必ずそのステップに間に合うので、自分の駒の予測が外れない
       match = createMatch(outs);
+      sentScore = '';
+      setWatchers(watchers);
     }
     setStatus('playing', { team: myTeam, direct: true });
   }
@@ -330,9 +337,27 @@ export function createNet() {
     setStatus('gone');
   }
 
+  /** 観戦者の人数が変わった。直結のホストは、観戦者がいるあいだだけ状態をサーバーへ送る */
+  function setWatchers(n) {
+    watchers = n | 0;
+    if (mode !== 'host' || !match) return;
+    if (watchers > 0 && !watchOut) {
+      watchOut = {
+        get open() { return !!ws && ws.readyState === 1; },
+        get buffered() { return ws ? ws.bufferedAmount : 0; },
+        send: (text) => ws.send(text),
+      };
+      match.watch(watchOut);
+    } else if (watchers === 0 && watchOut) {
+      match.unwatch(watchOut);
+      watchOut = null;
+    }
+  }
+
   function closeLink() {
     clearTimeout(linkTimer);
     match = null;
+    watchOut = null;
     if (dc) {
       dc.onopen = dc.onclose = dc.onmessage = null;
       try { dc.close(); } catch (_) {}
@@ -364,9 +389,14 @@ export function createNet() {
     get rtt() { return rtt; },
     /** 同じWi-Fiで直結しているか */
     get direct() { return mode !== 'server'; },
+    /** 相手の名前とレート（分からなければ null） */
+    get opponent() { return opp; },
+    /** この試合を観戦している人数 */
+    get watchers() { return watchers; },
     on(kind, fn) { listeners[kind].push(fn); },
 
-    connect() {
+    /** @param {{name?: string, rating?: number}} [who] 名乗る名前とレート */
+    connect(who) {
       if (ws && (status === 'connecting' || status === 'waiting' || status === 'playing')) return;
       // 前の対戦の残り（直結で遊んだあとはサーバーとの接続が開いたまま）を片付ける
       closeLink();
@@ -375,6 +405,9 @@ export function createNet() {
         try { ws.close(); } catch (_) {}
         ws = null;
       }
+      if (who) me = { name: who.name || 'ゲスト', rating: who.rating };
+      opp = null;
+      watchers = 0;
       reset();
       setStatus('connecting');
       try {
@@ -384,7 +417,7 @@ export function createNet() {
         return;
       }
       ws.onopen = () => {
-        wsSend({ t: 'join', rtc: canDirect() });
+        wsSend({ t: 'join', rtc: canDirect(), name: me.name, rating: me.rating });
         ping();
         clearInterval(pingTimer);
         pingTimer = setInterval(ping, PING_MS);
@@ -403,12 +436,15 @@ export function createNet() {
         switch (m.t) {
           case 'wait': setStatus('waiting'); break;
           case 'pair':
+            if (m.opp) opp = m.opp;
             if (canDirect()) startLink(m.team | 0);
             setStatus('waiting', { linking: true });
             break;
           case 'rtc': onSignal(m.d); break;
+          case 'watchers': setWatchers(m.n); break;
           case 'start':
             myTeam = m.team | 0;
+            if (m.opp) opp = m.opp;
             if (m.p2p) {
               if (dc && dc.readyState === 'open') { beginDirect(); break; }
               // 相手側では開いたが、こちらはまだ。少しだけ待つ
@@ -472,7 +508,12 @@ export function createNet() {
         it.flick ? it.flick.y : null,
       ];
       toAuthority({ t: 'i', n: seq, a: pack(pa), b: pack(pb) });
-      if (mode === 'host') match.step();
+      if (mode === 'host') {
+        match.step();
+        // 直結の試合は得点をサーバーが知らないので、変わったら知らせる（観戦の一覧に出す）
+        const sc = match.state.score.join(',');
+        if (sc !== sentScore) { sentScore = sc; wsSend({ t: 'score', s: match.state.score }); }
+      }
       pending.push({ seq, a: pa, b: pb });
       if (pending.length > MAX_PENDING) pending.shift();
 

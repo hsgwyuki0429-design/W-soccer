@@ -280,3 +280,104 @@ test('入力の届く間隔が揺れても（0個・2個・0個…）、駒は�
   assert.ok(Math.abs(u.y - r.y) < 30 * S, `送った入力の数と進んだ距離が合う (${(u.y - r.y).toFixed(1)})`);
   assert.ok(dashed, '遅れて届いた踏み込みも出る');
 });
+
+test('観戦：名前を相手に伝え、一覧に出し、観戦者に状態を配り、終わったら知らせる', async () => {
+  const { listRooms } = await import('../net/rooms.js');
+  const server = createServer();
+  server.on('upgrade', (req, socket, head) => {
+    const conn = accept(req, socket, head);
+    if (conn) handleConnection(conn);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const Socket = globalThis.RealWebSocket ?? globalThis.WebSocket;
+  const open = () => new Promise((resolve) => {
+    const ws = new Socket(`ws://127.0.0.1:${port}/ws`);
+    ws.got = [];
+    ws.onmessage = (e) => ws.got.push(JSON.parse(e.data));
+    ws.onopen = () => resolve(ws);
+  });
+  const until = async (ws, pred, what) => {
+    for (let i = 0; i < 150; i++) {
+      const m = ws.got.find(pred);
+      if (m) return m;
+      await sleep(10);
+    }
+    assert.fail(`${what} が届かない`);
+  };
+  const before = listRooms().length;
+
+  try {
+    // サーバーで進める試合（直結しない）
+    const a = await open(), b = await open();
+    a.send(JSON.stringify({ t: 'join', rtc: false, name: '  たろう\n', rating: 1620 }));
+    await sleep(30);
+    b.send(JSON.stringify({ t: 'join', rtc: false, name: 'はなこ', rating: 1480 }));
+    const sa = await until(a, (m) => m.t === 'start', 'start');
+    assert.deepEqual(sa.opp, { name: 'はなこ', rating: 1480 }, '相手の名前とレートが届く');
+    const sb = await until(b, (m) => m.t === 'start', 'start');
+    assert.deepEqual(sb.opp, { name: 'たろう', rating: 1620 }, '名前は整えてから伝える');
+
+    const rooms = listRooms();
+    assert.equal(rooms.length, before + 1);
+    const room = rooms[rooms.length - 1];
+    assert.deepEqual(room.names, ['たろう', 'はなこ']);
+    assert.equal(room.direct, false);
+
+    const w = await open();
+    w.send(JSON.stringify({ t: 'watch', id: room.id }));
+    const wm = await until(w, (m) => m.t === 'watching', 'watching');
+    assert.deepEqual(wm.names, ['たろう', 'はなこ']);
+    await until(w, (m) => m.t === 's', '観戦者への状態');
+    // 観戦者の人数が両プレイヤーに伝わる
+    await until(a, (m) => m.t === 'watchers' && m.n === 1, '観戦者の人数');
+    // 観戦者からの入力は試合に入らない（何も起きない）
+    w.send(JSON.stringify({ t: 'i', n: 1, a: [1, 0, 1, 0], b: [0, 0] }));
+    // 観戦者には間引いて送る（プレイヤーより少ない）
+    const na = a.got.length, nw = w.got.length;
+    await sleep(300);
+    assert.ok(w.got.length - nw < a.got.length - na, '観戦者へは間引いて送る');
+
+    // 無い試合を観戦しようとすると断られる
+    const x = await open();
+    x.send(JSON.stringify({ t: 'watch', id: 999999 }));
+    await until(x, (m) => m.t === 'nowatch', 'nowatch');
+
+    // プレイヤーが抜けたら観戦者に知らせる
+    a.close();
+    await until(w, (m) => m.t === 'ended', 'ended');
+    b.close(); w.close(); x.close();
+
+    // 直結の試合：観戦者がいるあいだ、ホストが送ってくる状態をそのまま中継する
+    const h = await open(), g = await open();
+    h.send(JSON.stringify({ t: 'join', rtc: true, name: 'ホスト' }));
+    await sleep(30);
+    g.send(JSON.stringify({ t: 'join', rtc: true, name: 'ゲスト2' }));
+    await until(h, (m) => m.t === 'pair', 'pair');
+    h.send(JSON.stringify({ t: 'mode', p2p: true }));
+    await until(h, (m) => m.t === 'start', 'start');
+    const pr = listRooms().find((r) => r.names[0] === 'ホスト');
+    assert.equal(pr.direct, true);
+    h.send(JSON.stringify({ t: 'score', s: [2, 1] }));
+    await sleep(30);
+    assert.deepEqual(listRooms().find((r) => r.id === pr.id).score, [2, 1], '直結の試合の得点も一覧に出る');
+    const w2 = await open();
+    w2.send(JSON.stringify({ t: 'watch', id: pr.id }));
+    await until(h, (m) => m.t === 'watchers' && m.n === 1, 'ホストへ観戦者の人数');
+    const snap = { t: 's', n: 7, s: encodeState(createState()), k: [0, 0] };
+    h.send(JSON.stringify(snap));
+    const got = await until(w2, (m) => m.t === 's', '中継された状態');
+    assert.equal(got.n, 7);
+    // ゲスト側が送ってきた状態は中継しない
+    g.send(JSON.stringify({ ...snap, n: 8 }));
+    await sleep(80);
+    assert.ok(!w2.got.some((m) => m.t === 's' && m.n === 8));
+    w2.close();
+    await until(h, (m) => m.t === 'watchers' && m.n === 0, '観戦者が抜けたらホストへ0人');
+    h.close(); g.close();
+  } finally {
+    await sleep(50);
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+  }
+});

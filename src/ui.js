@@ -12,7 +12,7 @@ const STICK_KEY = 'pairkick.stickScale';
 const RANGE_KEY = 'pairkick.aimRange';
 const ANGLE_KEY = 'pairkick.aimAngle';
 
-export function createUI(onPrimary, onCancel = () => {}) {
+export function createUI(onPrimary, onCancel = () => {}, onSpecExit = () => {}) {
   const el = (id) => document.getElementById(id);
 
   const hud = el('hud');
@@ -56,13 +56,41 @@ export function createUI(onPrimary, onCancel = () => {}) {
 
   let opponent = 'bot';
   try { opponent = localStorage.getItem(OPP_KEY) || 'bot'; } catch (_) {}
-  if (opponent !== 'bot' && opponent !== 'human') opponent = 'bot';
+  if (opponent !== 'bot' && opponent !== 'human' && opponent !== 'watch') opponent = 'bot';
+
+  // 名前と成績（対人戦のとき）・観戦できる試合の一覧（観戦のとき）
+  const ovProfile = el('ov-profile');
+  const nameInput = el('player-name');
+  const profileStats = el('profile-stats');
+  const ovWatch = el('ov-watch');
+  const watchMsg = el('watch-msg');
+  const watchList = el('watch-list');
+  const specExit = el('spec-exit');
+  let onName = () => {};
+  let onOpponent = () => {};
+  for (const node of [ovProfile, ovWatch]) {
+    node.addEventListener('pointerdown', (e) => e.stopPropagation());
+    node.addEventListener('click', (e) => e.stopPropagation());
+  }
+  nameInput.addEventListener('change', () => onName(nameInput.value));
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur(); });
+  specExit.addEventListener('click', (e) => { e.preventDefault(); onSpecExit(); });
+
+  // 主ボタンの文字。画面ごとの文字（はじめる／もう一度／タイトルへ）を覚えておき、
+  // 「観戦」を選んでいるあいだだけ「一覧を更新」にする
+  let primaryLabel = 'はじめる';
+  function paintPrimary() {
+    ovBtn.textContent = opponent === 'watch' && !waitingCancel ? '一覧を更新' : primaryLabel;
+  }
 
   function paintOpp() {
     ovCpu.hidden = opponent !== 'bot';
+    ovProfile.hidden = opponent !== 'human';
+    ovWatch.hidden = opponent !== 'watch';
     for (const b of ovOpps.querySelectorAll('.seg')) {
       b.classList.toggle('on', b.dataset.opp === opponent);
     }
+    paintPrimary();
   }
 
   ovOpps.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -74,6 +102,7 @@ export function createUI(onPrimary, onCancel = () => {}) {
     opponent = b.dataset.opp;
     try { localStorage.setItem(OPP_KEY, opponent); } catch (_) {}
     paintOpp();
+    onOpponent(opponent);
   });
 
   // 操作方法：'stick'（離してタックル）/ 'tap'（画面タップでタックル）
@@ -252,6 +281,57 @@ export function createUI(onPrimary, onCancel = () => {}) {
     get stickScale() { return stickPct / 100; },
     set onStickScale(fn) { onStickScale = fn; },
     get cpuLevel() { return saveCpuLevel(); },
+    set onOpponent(fn) { onOpponent = fn; },
+    set onName(fn) { onName = fn; },
+
+    /** 名前の欄と成績の行を描く */
+    setProfile(name, rating, wins, losses) {
+      if (document.activeElement !== nameInput) nameInput.value = name;
+      profileStats.textContent = `レート ${rating} · ${wins}勝 ${losses}敗`;
+    },
+
+    /**
+     * 観戦できる試合の一覧を出す。rooms が undefined なら探している最中、null ならサーバーに繋がらない。
+     * @param {Array|null|undefined} rooms
+     * @param {(id:number) => void} onPick
+     */
+    showWatchList(rooms, onPick) {
+      watchList.textContent = '';
+      if (rooms === undefined) { watchMsg.textContent = '試合を探しています…'; return; }
+      if (rooms == null) {
+        watchMsg.textContent = 'サーバーに接続できません（このページは観戦に対応していないかもしれません）。';
+        return;
+      }
+      if (!rooms.length) {
+        watchMsg.textContent = 'いま観戦できる試合はありません。';
+        return;
+      }
+      watchMsg.textContent = '見たい試合を選んでください。';
+      for (const r of rooms) {
+        const b = document.createElement('button');
+        b.className = 'watch-item';
+        b.setAttribute('role', 'listitem');
+        const names = document.createElement('span');
+        names.className = 'names';
+        names.textContent = `${r.names[0]} vs ${r.names[1]}`;
+        const score = document.createElement('span');
+        score.className = 'score';
+        score.textContent = `${r.score[0]} - ${r.score[1]}`;
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = r.watchers > 0 ? `観戦${r.watchers}` : '';
+        b.append(names, score, meta);
+        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onPick(r.id); });
+        watchList.append(b);
+      }
+    },
+
+    /** 観戦中の表示。names が null なら観戦をやめた */
+    setSpectating(names) {
+      specExit.hidden = names == null;
+      cpuTag.hidden = names == null;
+      cpuTag.textContent = names == null ? '' : `観戦中 · ${names[0]} vs ${names[1]}`;
+    },
 
     setCpuMatch(level) {
       cpuTag.hidden = level == null;
@@ -318,7 +398,8 @@ export function createUI(onPrimary, onCancel = () => {}) {
       ovBody.innerHTML = '2つの駒、2本の親指。<br>左半分で左の駒、右半分で右の駒。';
       ovHints.style.display = '';
       ovOpps.style.display = '';
-      ovBtn.textContent = 'はじめる';
+      primaryLabel = 'はじめる';
+      paintPrimary();
       ovBtn.disabled = false;
       overlay.classList.remove('hidden');
       lockUntil = performance.now() + 450;
@@ -364,24 +445,27 @@ export function createUI(onPrimary, onCancel = () => {}) {
       ovBody.textContent = text;
       ovHints.style.display = 'none';
       ovOpps.style.display = '';
-      ovBtn.textContent = 'タイトルへ';
+      primaryLabel = 'タイトルへ';
+      paintPrimary();
       ovBtn.disabled = false;
       overlay.classList.remove('hidden');
       lockUntil = performance.now() + 450;
     },
 
-    showResult(win, a, b) {
+    /** @param {string} [note] 補足（レートの増減など） */
+    showResult(win, a, b, note = '') {
       paintOpp();
       waitingCancel = false;
       ovOpps.style.display = '';
       ovKicker.textContent = `${a} — ${b}`;
       ovTitle.textContent = win ? 'WIN' : 'LOSE';
       ovTitle.className = win ? 'win' : 'lose';
-      ovBody.innerHTML = win
+      ovBody.textContent = note || (win
         ? 'パスが通ったとき、糸は光っていましたか。'
-        : 'ドリブルはリスク。パスは武器。';
+        : 'ドリブルはリスク。パスは武器。');
       ovHints.style.display = 'none';
-      ovBtn.textContent = 'もう一度';
+      primaryLabel = 'もう一度';
+      paintPrimary();
       overlay.classList.remove('hidden');
       lockUntil = performance.now() + 450;
     },

@@ -63,7 +63,8 @@ html, body {
    backdrop-filter のぼかしはそのたびに計算し直しになり、スマホでは描画が
    間に合わずカクつく原因になる。この2つだけはぼかさず、少し濃い地で同じ見た目に寄せる。 */
 #hud.glass,
-.banner-card.glass {
+.banner-card.glass,
+#spec-exit.glass {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: rgba(20, 26, 23, 0.8);
@@ -217,6 +218,79 @@ html, body {
   opacity: 0.8;
   pointer-events: none;
 }
+
+/* 観戦中だけ出す「観戦をやめる」。左上の帯に置く */
+#spec-exit {
+  position: absolute;
+  left: calc(var(--u) * 10);
+  top: calc(var(--u) * 8 + env(safe-area-inset-top, 0px));
+  pointer-events: auto;
+  appearance: none;
+  color: #fff;
+  font: inherit;
+  font-size: max(12px, calc(var(--u) * 12));
+  font-weight: 600;
+  padding: calc(var(--u) * 7) calc(var(--u) * 12);
+  border-radius: calc(var(--u) * 14);
+  cursor: pointer;
+}
+#spec-exit[hidden] { display: none; }
+
+/* 名前と成績（対人戦のとき） */
+#ov-profile { margin: calc(var(--u) * 14) 0 0; }
+#ov-profile[hidden], #ov-watch[hidden] { display: none; }
+#ov-profile label { display: block; font-size: max(12px, calc(var(--u) * 12)); opacity: 0.8; }
+#player-name {
+  width: min(100%, max(160px, calc(var(--u) * 200)));
+  box-sizing: border-box;
+  margin-top: calc(var(--u) * 6);
+  padding: calc(var(--u) * 7) calc(var(--u) * 10);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--u) * 10);
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  font: inherit;
+  font-size: max(16px, calc(var(--u) * 14));   /* 16px 未満だと iOS が入力時に拡大する */
+  text-align: center;
+}
+#profile-stats {
+  margin: calc(var(--u) * 8) 0 0;
+  font-size: max(12px, calc(var(--u) * 12));
+  color: #8fe3d9;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 観戦できる試合の一覧 */
+#ov-watch { margin: calc(var(--u) * 14) 0 0; }
+#watch-msg { margin: 0; font-size: max(12px, calc(var(--u) * 12)); opacity: 0.7; }
+#watch-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 6);
+  max-height: calc(var(--u) * 190);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#watch-list:not(:empty) { margin-top: calc(var(--u) * 8); }
+.watch-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  width: 100%;
+  padding: calc(var(--u) * 9) calc(var(--u) * 12);
+  border: 0.5px solid var(--hairline);
+  border-radius: calc(var(--u) * 12);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: max(12px, calc(var(--u) * 12));
+  text-align: left;
+  cursor: pointer;
+}
+.watch-item .names { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watch-item .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+.watch-item .meta { opacity: 0.6; font-size: 0.9em; white-space: nowrap; }
 
 #overlay-card {
   width: calc(var(--u) * 336);
